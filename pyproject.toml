@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "edgar-nl2sql"
+version = "0.1.0"
+description = "Natural-language to SQL RAG system over SEC EDGAR financial data (pgvector retrieval, Claude generation, guarded execution, self-correcting retry loop)."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Ahdi Thanu", email = "ahdi@uaconsulting.co" }]
+keywords = ["rag", "nl2sql", "pgvector", "claude", "sec-edgar", "fastapi"]
+
+# Runtime dependencies. Pinned loosely (>=, no upper bounds) by design: this is a
+# portfolio/demo app, not a library — we want fresh security fixes on install and we
+# rely on the test suite (not pins) to catch breakage.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
+    "anthropic>=0.40",
+    "voyageai>=0.3",
+    "sqlglot>=25.0",
+    "structlog>=24.4",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Dev/test tooling. httpx appears here too because FastAPI's TestClient needs it
+# (it is also a runtime dep for EDGAR calls; listing it in both places is harmless).
+dev = [
+    "pytest>=8.3",
+    "pytest-mock>=3.14",
+    "httpx>=0.27",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "eval"]
+markers = [
+    "eval: end-to-end evaluation tests that require a live database and API keys (opt in with RUN_EVAL=1)",
+]
