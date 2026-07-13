@@ -1,0 +1,39 @@
+# Keep the Docker build context minimal: only pyproject.toml, README.md, app/ and
+# scripts/ are COPY'd in the Dockerfile, but a small context also makes builds fast
+# and guarantees secrets/venvs can never leak into a layer by accident.
+
+# VCS / CI
+.git
+.github
+.gitignore
+
+# Environments & secrets — .env must NEVER enter an image layer
+.env
+.env.*
+!.env.example
+.venv
+venv/
+
+# Python build/runtime artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Tests & eval run in CI, not in the container
+tests/
+eval/
+
+# Docs & meta (not needed at runtime; README.md stays — pyproject references it)
+ARCHITECTURE.md
+CONTRACTS.md
+.claude/
+
+# Editor / OS noise
+.idea/
+.vscode/
+.DS_Store

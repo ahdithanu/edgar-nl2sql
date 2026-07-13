@@ -1,0 +1,126 @@
+# CI for edgar-nl2sql.
+#
+# Three jobs, in a deliberate trust ladder:
+#   1. unit          — always runs; fast, hermetic (no DB, no API keys, everything mocked).
+#   2. eval          — runs only when live-service secrets exist; executes the golden-set
+#                      eval against real Postgres + Claude + Voyage and GATES on accuracy.
+#   3. deploy-staging — push-to-main only, and only after unit AND eval are green.
+#
+# WHY a preflight job: GitHub Actions does not expose the `secrets` context in
+# job-level `if:` expressions, so "skip this job when secrets are absent" cannot be
+# written directly. The standard workaround is a tiny job that reads the secrets into
+# env (allowed at the step level) and publishes booleans as job outputs. Forks and
+# secret-less clones then skip eval/deploy gracefully instead of failing red.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Check available secrets
+    runs-on: ubuntu-latest
+    outputs:
+      has-eval-secrets: ${{ steps.check.outputs.has-eval-secrets }}
+      has-railway-token: ${{ steps.check.outputs.has-railway-token }}
+    steps:
+      - name: Detect which secrets are configured
+        id: check
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -n "$DATABASE_URL" ] && [ -n "$ANTHROPIC_API_KEY" ] && [ -n "$VOYAGE_API_KEY" ]; then
+            echo "has-eval-secrets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-eval-secrets=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Eval secrets not configured — eval job will be skipped."
+          fi
+          if [ -n "$RAILWAY_TOKEN" ]; then
+            echo "has-railway-token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-railway-token=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::RAILWAY_TOKEN not configured — deploy-staging will be skipped."
+          fi
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package with dev dependencies
+        run: pip install -e ".[dev]"
+
+      # Unit tests are hermetic by contract: anthropic/voyage/psycopg are mocked at
+      # module boundaries, so this job needs zero secrets and runs on every PR.
+      - name: Run unit tests
+        run: pytest -m "not eval" -q
+
+  eval:
+    name: Golden-set eval (accuracy gate)
+    runs-on: ubuntu-latest
+    needs: [preflight, unit]
+    if: needs.preflight.outputs.has-eval-secrets == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package with dev dependencies
+        run: pip install -e ".[dev]"
+
+      # RUN_EVAL=1 un-skips the eval suite; it runs the FULL pipeline (retrieval,
+      # generation, retry loop, execution) against live services and asserts
+      # accuracy >= EVAL_MIN_ACCURACY. A quality regression fails CI — this is the
+      # gate that keeps "the model got worse at SQL" from silently reaching staging.
+      - name: Run eval suite
+        env:
+          RUN_EVAL: "1"
+          EVAL_MIN_ACCURACY: "0.75"
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+        run: pytest -m eval -q
+
+  deploy-staging:
+    name: Deploy to Railway staging
+    runs-on: ubuntu-latest
+    needs: [preflight, unit, eval]
+    # `!cancelled()` + explicit result checks: deploy when unit passed and eval either
+    # passed or was skipped for lack of secrets (a skipped eval must not hard-block a
+    # secret-less fork, but a FAILED eval always blocks). Production promotion is a
+    # deliberate manual step — see README "Staging → production".
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      !cancelled() &&
+      needs.unit.result == 'success' &&
+      (needs.eval.result == 'success' || needs.eval.result == 'skipped') &&
+      needs.preflight.outputs.has-railway-token == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to staging
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service edgar-nl2sql-staging --detach
