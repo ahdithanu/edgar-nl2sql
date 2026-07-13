@@ -1,0 +1,221 @@
+# Golden set for the end-to-end eval harness (eval/test_eval.py).
+#
+# Each item pairs a natural-language question with reference SQL. Expected
+# values are NEVER hardcoded: the harness executes reference_sql against the
+# live database for ground truth, runs the full pipeline (retry loop and all)
+# on `question`, and compares the two result sets.
+#
+# check semantics:
+#   relative — numeric cells compared with 1% relative tolerance (rows sorted,
+#              numbers coerced). Use for dollar/ratio answers where the
+#              pipeline may add rounding or extra descriptive columns.
+#   exact    — sorted row sets must match exactly. Use for categorical
+#              answers (tickers, names, years).
+#
+# expect_failure: true — a graceful-failure case: the item PASSES when the
+#   pipeline returns success=False with a readable explanation. No
+#   reference_sql is executed.
+
+# --- simple lookups ---------------------------------------------------------
+
+- id: revenue_apple_2023
+  question: "What was Apple's revenue in fiscal 2023?"
+  reference_sql: >
+    SELECT fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker = 'AAPL' AND fm.metric = 'revenue'
+      AND fm.fiscal_year = 2023 AND fm.fiscal_period = 'FY'
+  check: relative
+
+- id: net_income_microsoft_2022
+  question: "How much net income did Microsoft report for fiscal year 2022?"
+  reference_sql: >
+    SELECT fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker = 'MSFT' AND fm.metric = 'net_income'
+      AND fm.fiscal_year = 2022 AND fm.fiscal_period = 'FY'
+  check: relative
+
+- id: total_assets_jpmorgan_2023
+  question: "What were JPMorgan's total assets at the end of fiscal 2023?"
+  reference_sql: >
+    SELECT fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker = 'JPM' AND fm.metric = 'total_assets'
+      AND fm.fiscal_year = 2023 AND fm.fiscal_period = 'FY'
+  check: relative
+
+- id: eps_nvidia_2024
+  question: "What was NVIDIA's diluted EPS in fiscal 2024?"
+  reference_sql: >
+    SELECT fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker = 'NVDA' AND fm.metric = 'eps_diluted'
+      AND fm.fiscal_year = 2024 AND fm.fiscal_period = 'FY'
+  check: relative
+
+# --- quarterly lookups ------------------------------------------------------
+
+- id: revenue_apple_q2_2023
+  question: "What was Apple's revenue in Q2 of fiscal 2023?"
+  reference_sql: >
+    SELECT fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker = 'AAPL' AND fm.metric = 'revenue'
+      AND fm.fiscal_year = 2023 AND fm.fiscal_period = 'Q2'
+  check: relative
+
+- id: net_income_tesla_q3_2022
+  question: "How much net income did Tesla make in the third quarter of fiscal 2022?"
+  reference_sql: >
+    SELECT fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker = 'TSLA' AND fm.metric = 'net_income'
+      AND fm.fiscal_year = 2022 AND fm.fiscal_period = 'Q3'
+  check: relative
+
+# --- superlatives -----------------------------------------------------------
+
+- id: biggest_revenue_2023
+  question: "Which company had the highest revenue in fiscal 2023?"
+  reference_sql: >
+    SELECT c.ticker
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE fm.metric = 'revenue' AND fm.fiscal_year = 2023
+      AND fm.fiscal_period = 'FY'
+    ORDER BY fm.value DESC
+    LIMIT 1
+  check: exact
+
+- id: top3_net_income_2023
+  question: "What were the top 3 companies by net income in fiscal 2023?"
+  reference_sql: >
+    SELECT c.ticker
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE fm.metric = 'net_income' AND fm.fiscal_year = 2023
+      AND fm.fiscal_period = 'FY'
+    ORDER BY fm.value DESC
+    LIMIT 3
+  check: exact
+
+- id: smallest_total_assets_2022
+  question: "Which of the covered companies had the smallest total assets in fiscal 2022?"
+  reference_sql: >
+    SELECT c.ticker
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE fm.metric = 'total_assets' AND fm.fiscal_year = 2022
+      AND fm.fiscal_period = 'FY'
+    ORDER BY fm.value ASC
+    LIMIT 1
+  check: exact
+
+# --- ratios (two metrics, same period) ---------------------------------------
+
+- id: net_margin_apple_2023
+  question: "What was Apple's net profit margin in fiscal 2023?"
+  reference_sql: >
+    SELECT ni.value / rev.value AS net_margin
+    FROM financial_metrics ni
+    JOIN financial_metrics rev
+      ON rev.company_id = ni.company_id
+     AND rev.fiscal_year = ni.fiscal_year
+     AND rev.fiscal_period = ni.fiscal_period
+     AND rev.metric = 'revenue'
+    JOIN companies c ON c.id = ni.company_id
+    WHERE c.ticker = 'AAPL' AND ni.metric = 'net_income'
+      AND ni.fiscal_year = 2023 AND ni.fiscal_period = 'FY'
+  check: relative
+
+- id: debt_ratio_exxon_2023
+  question: "What was Exxon Mobil's debt ratio (total liabilities over total assets) in fiscal 2023?"
+  reference_sql: >
+    SELECT tl.value / ta.value AS debt_ratio
+    FROM financial_metrics tl
+    JOIN financial_metrics ta
+      ON ta.company_id = tl.company_id
+     AND ta.fiscal_year = tl.fiscal_year
+     AND ta.fiscal_period = tl.fiscal_period
+     AND ta.metric = 'total_assets'
+    JOIN companies c ON c.id = tl.company_id
+    WHERE c.ticker = 'XOM' AND tl.metric = 'total_liabilities'
+      AND tl.fiscal_year = 2023 AND tl.fiscal_period = 'FY'
+  check: relative
+
+# --- YoY growth ---------------------------------------------------------------
+
+- id: revenue_growth_nvidia_2023_2024
+  question: "How much did NVIDIA's revenue grow from fiscal 2023 to fiscal 2024, in percent?"
+  reference_sql: >
+    SELECT (cur.value - prev.value) / prev.value * 100 AS growth_pct
+    FROM financial_metrics cur
+    JOIN financial_metrics prev
+      ON prev.company_id = cur.company_id
+     AND prev.metric = cur.metric
+     AND prev.fiscal_period = cur.fiscal_period
+     AND prev.fiscal_year = 2023
+    JOIN companies c ON c.id = cur.company_id
+    WHERE c.ticker = 'NVDA' AND cur.metric = 'revenue'
+      AND cur.fiscal_year = 2024 AND cur.fiscal_period = 'FY'
+  check: relative
+
+# --- multi-company comparison --------------------------------------------------
+
+- id: compare_revenue_apple_microsoft_2023
+  question: "Compare Apple's and Microsoft's revenue in fiscal 2023."
+  reference_sql: >
+    SELECT c.ticker, fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker IN ('AAPL', 'MSFT') AND fm.metric = 'revenue'
+      AND fm.fiscal_year = 2023 AND fm.fiscal_period = 'FY'
+    ORDER BY c.ticker
+  check: relative
+
+- id: banks_net_income_2023
+  question: "What was the net income of JPMorgan, Bank of America, and Goldman Sachs in fiscal 2023?"
+  reference_sql: >
+    SELECT c.ticker, fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker IN ('JPM', 'BAC', 'GS') AND fm.metric = 'net_income'
+      AND fm.fiscal_year = 2023 AND fm.fiscal_period = 'FY'
+    ORDER BY c.ticker
+  check: relative
+
+# --- ambiguous phrasing (should resolve to latest FY = 2024) --------------------
+
+- id: latest_revenue_walmart
+  question: "What is Walmart's latest annual revenue?"
+  reference_sql: >
+    SELECT fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker = 'WMT' AND fm.metric = 'revenue' AND fm.fiscal_period = 'FY'
+    ORDER BY fm.fiscal_year DESC
+    LIMIT 1
+  check: relative
+
+- id: how_profitable_meta_2023
+  question: "How profitable was Meta in fiscal 2023?"
+  reference_sql: >
+    SELECT fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker = 'META' AND fm.metric = 'net_income'
+      AND fm.fiscal_year = 2023 AND fm.fiscal_period = 'FY'
+  check: relative
+
+# --- graceful failure ------------------------------------------------------------
+
+- id: nonsense_question
+  question: "What was the average rainfall in Mordor during the Third Age?"
+  expect_failure: true
