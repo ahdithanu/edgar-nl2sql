@@ -3,295 +3,552 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>edgar-nl2sql — ask SEC financial data in plain English</title>
+<title>edgar-nl-sql — ask SEC financial data in plain English</title>
+<!-- Implements the EdgarQuery design (claude.ai/design project 96ab55cb) with the
+     console wired to the live API instead of canned data. Single file on purpose:
+     the page exists to make the pipeline observable, not to be a product. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  /* Single-file demo UI. No build step, no framework, no external assets —
-     the page exists to make the pipeline observable, not to be a product. */
-  :root {
-    --bg: #f6f7f9; --surface: #ffffff; --border: #e3e6ea;
-    --text: #1c2430; --muted: #5c6773; --accent: #2563eb; --accent-soft: #eff4ff;
-    --ok: #16803c; --ok-soft: #e8f5ec; --warn: #92600a; --warn-soft: #fdf3e0;
-    --err: #b3261e; --err-soft: #fdeceb; --neutral-soft: #eef0f3;
-    --code-bg: #0f172a; --code-text: #e2e8f0; --code-kw: #7dd3fc; --code-num: #fbbf24; --code-str: #86efac;
+  :root{
+    --bg:#0d1117; --surface:#12181f; --surface2:#0f151c; --code:#0a0e13;
+    --border:#232c38; --border2:#171e26; --hair:#3a4553;
+    --text:#e6edf3; --mono-light:#c9d3de; --subtle:#a7b2bf; --muted:#8b98a5; --dim:#5c6773;
+    --gold:#e8b13a; --gold-hi:#f2c766; --green:#4cc38a; --red:#f0645f;
+    --purple:#c07ad8; --blue:#7aa2c4;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
   }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0e1116; --surface: #161b22; --border: #2a313b;
-      --text: #e6e9ee; --muted: #97a1ad; --accent: #6ea8fe; --accent-soft: #1a2740;
-      --ok: #4ade80; --ok-soft: #12291a; --warn: #fbbf24; --warn-soft: #2e2410;
-      --err: #f87171; --err-soft: #331512; --neutral-soft: #21262e;
-    }
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 24px 20px 64px; }
-  header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
-  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
-  h1 .accent { color: var(--accent); }
-  .tagline { color: var(--muted); margin: 2px 0 20px; }
-  .meta { display: flex; align-items: center; gap: 14px; font-size: 13px; color: var(--muted); }
-  .meta a { color: var(--accent); text-decoration: none; }
-  #health-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #9ca3af; margin-right: 5px; vertical-align: 0; }
-  #health-dot.ok { background: var(--ok); } #health-dot.degraded { background: var(--warn); } #health-dot.down { background: var(--err); }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
-  form { display: flex; gap: 10px; }
-  input[type=text] {
-    flex: 1; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
-    background: var(--bg); color: var(--text); font-size: 15px;
-  }
-  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-  button {
-    padding: 10px 18px; border: 0; border-radius: 8px; background: var(--accent); color: #fff;
-    font-size: 15px; font-weight: 600; cursor: pointer;
-  }
-  button:disabled { opacity: 0.55; cursor: wait; }
-  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-  .chip {
-    background: var(--accent-soft); color: var(--accent); border: 0; border-radius: 999px;
-    padding: 5px 12px; font-size: 13px; font-weight: 500; cursor: pointer;
-  }
-  .keyrow { margin-top: 12px; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .keyrow input { flex: 0 1 260px; padding: 5px 9px; font-size: 13px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
-  #status { margin: 8px 0 16px; color: var(--muted); font-size: 14px; min-height: 20px; }
-  #status .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: r 0.8s linear infinite; margin-right: 7px; vertical-align: -1px; }
-  @keyframes r { to { transform: rotate(360deg); } }
-  .banner-err { background: var(--err-soft); color: var(--err); border: 1px solid var(--err); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin: 22px 0 8px; }
-  .answer { font-size: 17px; }
-  .answer.failed { color: var(--err); }
-  pre.sql {
-    background: var(--code-bg); color: var(--code-text); border-radius: 8px; padding: 12px 14px;
-    overflow-x: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 8px 0;
-    white-space: pre-wrap; word-break: break-word;
-  }
-  pre.sql .kw { color: var(--code-kw); font-weight: 600; } pre.sql .num { color: var(--code-num); } pre.sql .str { color: var(--code-str); }
-  table { border-collapse: collapse; width: 100%; font-size: 14px; }
-  th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  th { background: var(--neutral-soft); font-weight: 600; }
-  .attempt { border-left: 3px solid var(--border); padding: 2px 0 2px 14px; margin: 0 0 14px 4px; }
-  .attempt-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
-  .badge { font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
-  .badge.success { background: var(--ok-soft); color: var(--ok); }
-  .badge.execution_error, .badge.guard_rejected { background: var(--err-soft); color: var(--err); }
-  .badge.empty_result { background: var(--warn-soft); color: var(--warn); }
-  .attempt .why { background: var(--accent-soft); border-radius: 8px; padding: 8px 12px; font-size: 14px; margin: 6px 0; }
-  .attempt .why b { color: var(--accent); }
-  .attempt .errmsg { color: var(--err); font-size: 13px; font-family: ui-monospace, Menlo, monospace; margin: 4px 0; white-space: pre-wrap; }
-  .muted { color: var(--muted); font-size: 13px; }
-  details { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; background: var(--surface); }
-  summary { cursor: pointer; font-size: 14px; }
-  summary .sim { color: var(--muted); font-size: 12px; }
-  details pre { white-space: pre-wrap; font-size: 13px; color: var(--muted); margin: 8px 0 2px; }
-  footer { margin-top: 40px; font-size: 13px; color: var(--muted); }
-  .tablewrap { overflow-x: auto; }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased}
+  a{color:var(--gold);text-decoration:none}
+  a:hover{color:var(--gold-hi)}
+  ::selection{background:rgba(232,177,58,0.28)}
+  @keyframes edgpulse{0%,100%{box-shadow:0 0 0 0 rgba(232,177,58,0),inset 0 0 0 1px var(--gold)}50%{box-shadow:0 0 14px 0 rgba(232,177,58,0.35),inset 0 0 0 1px var(--gold)}}
+  @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 0;border-bottom:1px solid var(--border);flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:12px}
+  #health-dot{width:9px;height:9px;border-radius:50%;background:var(--dim);flex-shrink:0}
+  #health-dot.ok{background:var(--green);box-shadow:0 0 8px rgba(76,195,138,0.6)}
+  #health-dot.degraded{background:var(--gold);box-shadow:0 0 8px rgba(232,177,58,0.6)}
+  #health-dot.down{background:var(--red);box-shadow:0 0 8px rgba(240,100,95,0.6)}
+  .brand-name{font-family:var(--mono);font-size:13px;letter-spacing:0.02em;color:var(--mono-light)}
+  nav{display:flex;align-items:center;gap:18px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .nav-badge{color:var(--dim);border:1px solid var(--border);padding:3px 8px;border-radius:4px}
+
+  .hero{padding:64px 0 40px}
+  .kicker{font-family:var(--mono);font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);margin-bottom:22px}
+  h1{font-family:'Newsreader',serif;font-weight:500;font-size:clamp(34px,5.4vw,60px);line-height:1.08;letter-spacing:-0.01em;margin:0 0 24px;max-width:16ch}
+  h1 em{font-style:italic;color:var(--gold)}
+  .lede{font-size:clamp(16px,2vw,19px);color:var(--subtle);max-width:64ch;margin:0 0 32px}
+  .stat-chips{display:flex;flex-wrap:wrap;gap:10px;font-family:var(--mono);font-size:12.5px}
+  .stat-chips > span{border:1px solid var(--border);background:var(--surface);color:var(--mono-light);padding:7px 12px;border-radius:5px}
+  .stat-chips .hl{color:var(--green)}
+
+  .console-section{padding:16px 0 56px}
+  .console{border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden}
+  .console-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--surface2);flex-wrap:wrap}
+  .console-head .route{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12.5px}
+  .route .verb{color:var(--gold);font-weight:600}
+  .route .path{color:var(--mono-light)}
+  .route .ver{color:var(--dim)}
+  .env-pill{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:11.5px;padding:4px 9px;border-radius:20px;border:1px solid rgba(76,195,138,0.4);background:rgba(76,195,138,0.08);color:var(--green)}
+  .env-pill .pd{width:7px;height:7px;border-radius:50%;background:var(--green)}
+  .env-pill.degraded{color:var(--gold);border-color:rgba(232,177,58,0.4);background:rgba(232,177,58,0.08)}
+  .env-pill.degraded .pd{background:var(--gold)}
+  .env-pill.down{color:var(--red);border-color:rgba(240,100,95,0.4);background:rgba(240,100,95,0.08)}
+  .env-pill.down .pd{background:var(--red)}
+
+  .input-row{padding:20px 16px 4px}
+  .field-label{display:block;font-family:var(--mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:9px}
+  .ask{display:flex;gap:10px;flex-wrap:wrap}
+  .ask input{flex:1 1 320px;min-width:0;background:var(--code);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:14px;padding:12px 14px;outline:none}
+  .ask input:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(232,177,58,0.15)}
+  .ask button{flex:0 0 auto;background:var(--gold);color:var(--bg);border:none;border-radius:6px;font-family:var(--mono);font-weight:600;font-size:13.5px;padding:12px 20px;cursor:pointer;letter-spacing:0.01em}
+  .ask button:hover{background:var(--gold-hi)}
+  .ask button:focus-visible{outline:2px solid var(--gold-hi);outline-offset:2px}
+  .ask button:disabled{opacity:0.6;cursor:wait}
+  .examples{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 4px}
+  .examples button{text-align:left;background:transparent;border:1px solid var(--border);border-radius:20px;color:var(--subtle);font-family:var(--mono);font-size:12px;padding:6px 13px;cursor:pointer}
+  .examples button:hover{border-color:var(--hair);color:var(--text)}
+  .examples button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+  .keyrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0 2px;font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .keyrow input{background:var(--code);border:1px solid var(--border);border-radius:5px;color:var(--mono-light);font-family:var(--mono);font-size:12px;padding:5px 10px;outline:none;flex:0 1 240px}
+  .keyrow input:focus{border-color:var(--gold)}
+
+  .stages-row{padding:22px 16px 6px}
+  .stages{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .stage-cell{display:flex;align-items:center;gap:8px}
+  .stage-arrow{color:var(--hair);font-family:var(--mono);font-size:13px}
+  .stage{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:5px;border:1px solid var(--border);background:var(--surface2);color:var(--dim);font-family:var(--mono);font-size:12px;white-space:nowrap;transition:all 0.25s ease}
+  .stage .dot{width:8px;height:8px;border-radius:50%;background:#2c3745;flex-shrink:0}
+  .stage.active{border-color:var(--gold);color:var(--gold);background:rgba(232,177,58,0.06);animation:edgpulse 1.4s ease-in-out infinite}
+  .stage.active .dot{background:var(--gold)}
+  .stage.done{border-color:rgba(76,195,138,0.5);color:var(--green);background:rgba(76,195,138,0.06)}
+  .stage.done .dot{background:var(--green)}
+  .stage.error{border-color:var(--red);color:var(--red);background:rgba(240,100,95,0.08)}
+  .stage.error .dot{background:var(--red)}
+  #diagnosing{margin-top:14px;font-family:var(--mono);font-size:12px;color:var(--red);border-left:2px solid var(--red);padding:6px 0 6px 12px;background:rgba(240,100,95,0.05)}
+  #diagnosing b{color:var(--text);font-weight:600}
+
+  .log-block{padding:16px}
+  .panel-label{font-family:var(--mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+  .log{background:var(--code);border:1px solid var(--border);border-radius:6px;padding:12px 14px;font-family:var(--mono);font-size:12.5px;line-height:1.75;min-height:60px}
+  .log .row{display:flex;gap:10px;align-items:baseline}
+  .log .tag{flex:0 0 66px;font-weight:600}
+  .log .tag.info{color:var(--muted)} .log .tag.attempt{color:var(--gold)}
+  .log .tag.error{color:var(--red)} .log .tag.success{color:var(--green)}
+  .log .txt{color:var(--mono-light);word-break:break-word}
+  .log .idle{color:var(--dim)}
+
+  .output{border-top:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr}
+  @media (max-width:760px){.output{grid-template-columns:1fr}.sql-pane{border-right:none!important;border-bottom:1px solid var(--border)}}
+  .sql-pane{border-right:1px solid var(--border);padding:16px;min-width:0}
+  .sql-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}
+  .sql-head .panel-label{margin:0}
+  #copy-btn{background:transparent;border:1px solid var(--border);border-radius:5px;color:var(--subtle);font-family:var(--mono);font-size:11.5px;padding:4px 10px;cursor:pointer}
+  #copy-btn:hover{border-color:var(--hair);color:var(--text)}
+  pre.sql{margin:0;background:var(--code);border:1px solid var(--border);border-radius:6px;padding:14px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.7}
+  pre.sql .kw{color:var(--blue)} pre.sql .fn{color:var(--purple)} pre.sql .str{color:var(--green)}
+  pre.sql .num{color:var(--gold)} pre.sql .cast{color:var(--purple)} pre.sql .cmt{color:var(--dim)}
+  .answer-pane{padding:16px;min-width:0}
+  #answer{margin:0 0 16px;font-size:15px;color:var(--mono-light);line-height:1.6}
+  #answer .figure{color:var(--gold);font-weight:600}
+  #answer.failed{color:var(--red)}
+  .tablewrap{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:12px}
+  th{text-align:left;color:var(--muted);font-weight:500;padding:7px 12px 7px 0;border-bottom:1px solid var(--border);white-space:nowrap}
+  td{padding:7px 12px 7px 0;border-bottom:1px solid var(--border2);color:var(--mono-light);white-space:nowrap}
+
+  .ctx-block{border-top:1px solid var(--border);padding:16px}
+  .ctx-block details{border:1px solid var(--border);border-radius:6px;background:var(--code);padding:8px 12px;margin-bottom:8px}
+  .ctx-block summary{cursor:pointer;font-family:var(--mono);font-size:12.5px;color:var(--mono-light)}
+  .ctx-block summary .t{color:var(--dim)} .ctx-block summary .s{color:var(--muted);font-size:11px}
+  .ctx-block pre{white-space:pre-wrap;font-family:var(--mono);font-size:12px;color:var(--muted);margin:8px 0 2px;line-height:1.6}
+
+  section.band{padding:56px 0;border-top:1px solid var(--border)}
+  h2{font-family:'Newsreader',serif;font-weight:500;font-size:clamp(26px,3.6vw,38px);margin:0 0 8px;letter-spacing:-0.01em}
+  .band-sub{color:var(--muted);max-width:60ch;margin:0 0 36px;font-size:15px}
+  .steps{display:grid;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .step{display:flex;gap:20px;padding:22px 20px;background:var(--surface);align-items:flex-start}
+  .step .n{font-family:var(--mono);font-size:13px;color:var(--gold);flex:0 0 28px}
+  .step .t{font-weight:600;font-size:15.5px;margin-bottom:4px}
+  .step .d{color:var(--muted);font-size:14px;max-width:70ch}
+  .step.retry{background:rgba(240,100,95,0.06);border-left:3px solid var(--red)}
+  .step.retry .n,.step.retry .t{color:var(--red)}
+  .step.retry .d{color:var(--subtle)}
+
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+  .card{border:1px solid var(--border);border-radius:9px;background:var(--surface);padding:20px}
+  .card .k{font-family:var(--mono);font-size:11px;color:var(--gold);margin-bottom:10px}
+  .card .k.green{color:var(--green)} .card .k.red{color:var(--red)}
+  .card .t{font-weight:600;margin-bottom:6px}
+  .card .d{color:var(--muted);font-size:14px}
+
+  .scope-list{border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden}
+  .scope-item{display:flex;gap:14px;padding:18px 20px;border-bottom:1px solid var(--border);align-items:flex-start}
+  .scope-item:last-child{border-bottom:none}
+  .scope-item .x{color:var(--red);font-family:var(--mono);flex:0 0 auto;font-size:15px}
+  .scope-item .d{color:var(--muted)}
+
+  footer{padding:40px 0 56px;border-top:1px solid var(--border)}
+  .foot-note{font-family:var(--mono);font-size:12.5px;color:var(--muted);line-height:1.8;margin-bottom:18px}
+  .tech-chips{display:flex;flex-wrap:wrap;gap:8px;font-family:var(--mono);font-size:11.5px}
+  .tech-chips span{border:1px solid var(--border);color:var(--subtle);padding:5px 11px;border-radius:5px}
 </style>
 </head>
 <body>
 <div class="wrap">
+
   <header>
-    <h1>edgar-<span class="accent">nl2sql</span></h1>
-    <div class="meta">
-      <span><span id="health-dot"></span><span id="health-label">checking…</span></span>
-      <a href="/docs">API docs</a>
+    <div class="brand">
+      <span id="health-dot"></span>
+      <span class="brand-name">edgar-nl-sql</span>
     </div>
+    <nav>
+      <a href="#pipeline">pipeline</a>
+      <a href="#discipline">discipline</a>
+      <a href="#scope">scope</a>
+      <a href="/docs">api docs</a>
+      <span class="nav-badge">portfolio · FDE</span>
+    </nav>
   </header>
-  <p class="tagline">Ask a question about SEC EDGAR financial data in plain English. Watch the system retrieve context, generate SQL with Claude, and self-correct when it gets it wrong.</p>
 
-  <div class="card">
-    <form id="ask-form">
-      <input type="text" id="question" placeholder="e.g. What was Apple's revenue in fiscal 2023?" minlength="3" maxlength="1000" required>
-      <button type="submit" id="ask-btn">Ask</button>
-    </form>
-    <div class="chips" id="chips"></div>
-    <div class="keyrow">
-      <label for="api-key">API key (if this deployment requires one):</label>
-      <input type="password" id="api-key" placeholder="X-API-Key" autocomplete="off">
+  <!-- HERO -->
+  <section class="hero">
+    <div class="kicker">Natural language → SQL over SEC EDGAR</div>
+    <h1>Ask financial questions in English. Get <em>the SQL</em> and the answer.</h1>
+    <p class="lede">It retrieves the relevant schema and business terms first, writes the query, checks its own work against a read-only guard, and retries when it's wrong — capped, logged, and measured on every request.</p>
+    <div class="stat-chips">
+      <span>25 public companies</span>
+      <span>5yr of filings</span>
+      <span>pgvector retrieval</span>
+      <span>3-attempt retry cap</span>
+      <span><span class="hl">eval-gated</span> CI</span>
     </div>
-  </div>
+  </section>
 
-  <div id="status"></div>
-  <div id="error" class="banner-err" hidden></div>
-  <div id="result" hidden>
-    <h2>Answer</h2>
-    <div class="card"><div class="answer" id="answer"></div></div>
-    <div id="final-sql-section">
-      <h2>Final SQL</h2>
-      <pre class="sql" id="final-sql"></pre>
+  <!-- CONSOLE (live — wired to the real API) -->
+  <section class="console-section">
+    <div class="console">
+
+      <div class="console-head">
+        <div class="route">
+          <span class="verb">POST</span>
+          <span class="path">/query</span>
+          <span class="ver">· api.v1</span>
+        </div>
+        <div class="env-pill" id="env-pill"><span class="pd"></span><span id="env-label">checking…</span></div>
+      </div>
+
+      <div class="input-row">
+        <label class="field-label" for="question">question</label>
+        <form class="ask" id="ask-form">
+          <input type="text" id="question" spellcheck="false" minlength="3" maxlength="1000" required
+                 value="Which company had the highest net margin in 2023?">
+          <button type="submit" id="ask-btn">Run query</button>
+        </form>
+        <div class="examples" id="examples"></div>
+        <div class="keyrow">
+          <label for="api-key">x-api-key (if this deployment requires one)</label>
+          <input type="password" id="api-key" autocomplete="off">
+        </div>
+      </div>
+
+      <div class="stages-row">
+        <div class="stages" id="stages"></div>
+        <div id="diagnosing" hidden></div>
+      </div>
+
+      <div class="log-block">
+        <div class="panel-label">retry log</div>
+        <div class="log" id="log"><span class="idle">— idle. run a query to trace the pipeline.</span></div>
+      </div>
+
+      <div class="output" id="output" hidden>
+        <div class="sql-pane">
+          <div class="sql-head">
+            <span class="panel-label">generated sql</span>
+            <button id="copy-btn" type="button">Copy</button>
+          </div>
+          <pre class="sql"><code id="sql-code"></code></pre>
+        </div>
+        <div class="answer-pane">
+          <div class="panel-label">answer</div>
+          <p id="answer"></p>
+          <div class="tablewrap" id="rows-table"></div>
+        </div>
+      </div>
+
+      <div class="ctx-block" id="ctx-block" hidden>
+        <div class="panel-label">retrieved context (injected into the prompt before generation)</div>
+        <div id="ctx-docs"></div>
+      </div>
+
     </div>
-    <div id="rows-section">
-      <h2>Results <span class="muted" id="row-count"></span></h2>
-      <div class="card tablewrap" id="rows-table"></div>
+  </section>
+
+  <!-- PIPELINE -->
+  <section class="band" id="pipeline">
+    <h2>The pipeline</h2>
+    <p class="band-sub">Five steps per request. The loop between execute and generate is the interesting part.</p>
+    <div class="steps">
+      <div class="step"><span class="n">01</span><div><div class="t">Embed &amp; retrieve</div><div class="d">The question is embedded and matched against schema chunks and a business-term glossary in pgvector — so the model sees the right tables and definitions before it writes anything.</div></div></div>
+      <div class="step"><span class="n">02</span><div><div class="t">Generate with schema in prompt</div><div class="d">Retrieved context is assembled into the prompt and the model emits a single SQL statement — no free-roaming table access, just the columns it was shown.</div></div></div>
+      <div class="step"><span class="n">03</span><div><div class="t">Validate read-only &amp; execute</div><div class="d">The statement is parsed and rejected unless it's a single SELECT. Only then does it run against Postgres, inside a READ ONLY transaction with a statement timeout.</div></div></div>
+      <div class="step retry"><span class="n">04</span><div><div class="t">Feed the error back &amp; retry — capped at 3</div><div class="d">If execution errors or returns nothing, the exact failure is fed back to generate for another attempt. Hard cap of 3 attempts bounds latency and cost; past that it fails loud, not silent.</div></div></div>
+      <div class="step"><span class="n">05</span><div><div class="t">Synthesize the answer</div><div class="d">Result rows are handed back to the model to produce a plain-English answer alongside the raw table — so a reader gets both the takeaway and the receipts.</div></div></div>
     </div>
-    <h2>Self-correction timeline <span class="muted" id="attempt-count"></span></h2>
-    <div class="card" id="attempts"></div>
-    <h2>Retrieved context (injected into the prompt before generation)</h2>
-    <div id="context-docs"></div>
-    <p class="muted">request_id: <span id="request-id"></span></p>
-  </div>
+  </section>
+
+  <!-- DISCIPLINE -->
+  <section class="band" id="discipline">
+    <h2>Engineering discipline</h2>
+    <p class="band-sub">The model is the easy part. These are the guardrails that make it shippable.</p>
+    <div class="cards">
+      <div class="card"><div class="k">eval harness</div><div class="t">17 golden questions</div><div class="d">A fixed set of question→expected-result pairs run on every change. Accuracy is a number, not a vibe.</div></div>
+      <div class="card"><div class="k">ci gate</div><div class="t">Fails the build below the floor</div><div class="d">The eval runs in CI and blocks merge if accuracy drops under the threshold. Regressions can't ship.</div></div>
+      <div class="card"><div class="k">observability</div><div class="t">JSON logs, every attempt traced</div><div class="d">Retrieval hits, generated SQL, validation, and each retry are logged structured with a request id — a failure is reproducible.</div></div>
+      <div class="card"><div class="k">deploy</div><div class="t">staging → prod</div><div class="d">Changes land in staging behind the same eval gate before promotion. Prod is boring on purpose.</div></div>
+      <div class="card"><div class="k green">safety</div><div class="t">SELECT-only enforcement</div><div class="d">Parsed at the app layer and backed by a READ ONLY transaction. Two independent locks, not one prompt instruction.</div></div>
+      <div class="card"><div class="k red">cost</div><div class="t">3-attempt cap</div><div class="d">Retries are bounded so a pathological question can't burn unbounded tokens or wall-clock time.</div></div>
+    </div>
+  </section>
+
+  <!-- SCOPE -->
+  <section class="band" id="scope">
+    <h2>Deliberately not built</h2>
+    <p class="band-sub">Scope is a design tool. What's left out is a decision, not an oversight.</p>
+    <div class="scope-list">
+      <div class="scope-item"><span class="x">✕</span><div><b>Multi-cloud / AWS build-out.</b> <span class="d">One managed Postgres and one container host. Portability isn't a requirement this project has.</span></div></div>
+      <div class="scope-item"><span class="x">✕</span><div><b>Separate vector service.</b> <span class="d">pgvector lives in the same Postgres. No second datastore to operate for 25 companies of filings.</span></div></div>
+      <div class="scope-item"><span class="x">✕</span><div><b>Premature scaling infra.</b> <span class="d">No queues, no sharding, no autoscaling groups. The load doesn't exist yet, so neither does the machinery for it.</span></div></div>
+      <div class="scope-item"><span class="x">✕</span><div><b>Multi-origin routing.</b> <span class="d">Single origin, single region. Edge distribution buys nothing for an internal-style tool with a handful of users.</span></div></div>
+    </div>
+  </section>
 
   <footer>
-    FastAPI · Supabase Postgres + pgvector · Voyage AI embeddings · Claude SQL generation ·
-    retrieval happens <em>before</em> generation · retries capped at 3 by design.
+    <div class="foot-note">A portfolio project for a Forward Deployed Engineer search. Data from <a href="https://data.sec.gov" target="_blank" rel="noopener">data.sec.gov</a>. Everything in the console above comes live from the API — including the retries.</div>
+    <div class="tech-chips">
+      <span>FastAPI</span><span>Supabase</span><span>pgvector</span><span>Claude SDK</span><span>Voyage AI</span><span>Docker</span><span>GitHub Actions</span>
+    </div>
   </footer>
+
 </div>
 
 <script>
 "use strict";
 const $ = (s) => document.querySelector(s);
+const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 const EXAMPLES = [
   "What was Apple's revenue in fiscal 2023?",
-  "Which company had the highest net income in 2024?",
   "What was Microsoft's net margin in fiscal 2023?",
   "How did NVIDIA's revenue grow from 2023 to 2024?",
   "Compare Amazon and Walmart's revenue in 2022",
 ];
 
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
-  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const STAGE_LABELS = ["retrieve context", "generate SQL", "validate read-only", "execute", "synthesize"];
 
-// Cosmetic SQL highlighting — runs on already-escaped text, keywords only.
-const SQL_KW = /\b(SELECT|FROM|WHERE|JOIN|INNER|LEFT|RIGHT|OUTER|ON|GROUP BY|ORDER BY|HAVING|LIMIT|OFFSET|WITH|AS|AND|OR|NOT|IN|IS|NULL|DISTINCT|CASE|WHEN|THEN|ELSE|END|UNION|ALL|DESC|ASC|BETWEEN|LIKE|ILIKE|SUM|AVG|COUNT|MIN|MAX|ROUND|COALESCE|NULLIF|CAST|EXTRACT|FILTER|OVER|PARTITION BY|LAG|LEAD)\b/gi;
-function highlightSQL(sql) {
-  let h = esc(sql);
-  h = h.replace(/&#39;(?:[^&]|&(?!#39;))*?&#39;/g, (m) => `<span class="str">${m}</span>`);
-  h = h.replace(SQL_KW, (m) => `<span class="kw">${m}</span>`);
-  // Lookbehind: never match the digits inside HTML entities like &#39;
-  h = h.replace(/(?<!&#)\b\d+(\.\d+)?\b/g, (m) => `<span class="num">${m}</span>`);
-  return h;
-}
-
-const OUTCOME_LABEL = {
-  success: "success",
-  guard_rejected: "rejected by SQL guard",
-  execution_error: "execution error",
-  empty_result: "empty result",
-};
-
-// --- API key persistence (demo convenience only; key lives in localStorage) ---
-const keyInput = $("#api-key");
-keyInput.value = localStorage.getItem("edgar_api_key") || "";
-keyInput.addEventListener("change", () => localStorage.setItem("edgar_api_key", keyInput.value.trim()));
-
-// --- health pill ---
-(async function health() {
-  const dot = $("#health-dot"), label = $("#health-label");
-  try {
-    const r = await fetch("/health");
-    const body = await r.json();
-    dot.className = body.status === "ok" ? "ok" : "degraded";
-    label.textContent = body.status === "ok" ? "healthy" : "degraded (database unreachable)";
-  } catch {
-    dot.className = "down";
-    label.textContent = "unreachable";
-  }
-})();
+// --- build stage pills ---
+const stagesEl = $("#stages");
+STAGE_LABELS.forEach((label, i) => {
+  const cell = document.createElement("div");
+  cell.className = "stage-cell";
+  cell.innerHTML = (i > 0 ? '<span class="stage-arrow">→</span>' : "") +
+    `<div class="stage" id="stage-${i}"><span class="dot"></span><span>${label}</span></div>`;
+  stagesEl.appendChild(cell);
+});
+const setStage = (i, status) => { $(`#stage-${i}`).className = "stage" + (status === "idle" ? "" : " " + status); };
+const resetStages = () => STAGE_LABELS.forEach((_, i) => setStage(i, "idle"));
 
 // --- example chips ---
 for (const q of EXAMPLES) {
   const b = document.createElement("button");
-  b.type = "button"; b.className = "chip"; b.textContent = q;
+  b.type = "button"; b.textContent = q;
   b.addEventListener("click", () => { $("#question").value = q; ask(); });
-  $("#chips").appendChild(b);
+  $("#examples").appendChild(b);
 }
+
+// --- API key persistence (demo convenience only) ---
+const keyInput = $("#api-key");
+keyInput.value = localStorage.getItem("edgar_api_key") || "";
+keyInput.addEventListener("change", () => localStorage.setItem("edgar_api_key", keyInput.value.trim()));
+
+// --- health → env pill + header dot ---
+(async () => {
+  const pill = $("#env-pill"), label = $("#env-label"), dot = $("#health-dot");
+  try {
+    const body = await (await fetch("/health")).json();
+    const ok = body.status === "ok";
+    pill.className = "env-pill" + (ok ? "" : " degraded");
+    label.textContent = ok ? "live" : "degraded";
+    dot.className = ok ? "ok" : "degraded";
+  } catch {
+    pill.className = "env-pill down"; label.textContent = "offline"; dot.className = "down";
+  }
+})();
+
+// --- retry log ---
+const logEl = $("#log");
+function logLine(tag, text) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.innerHTML = `<span class="tag ${tag}">${tag}</span><span class="txt">${esc(text)}</span>`;
+  logEl.appendChild(row);
+}
+function resetLog() { logEl.innerHTML = ""; }
+
+// --- SQL syntax highlighting (design token colors) ---
+const KW = new Set("select from where join on and or order by group limit offset as desc asc inner left right full outer not null distinct case when then else end with union all between like ilike in is having filter over partition".split(" "));
+const FN = new Set("round sum avg count max min coalesce nullif cast extract date_trunc lag lead rank".split(" "));
+function highlightSQL(sql) {
+  const tokens = sql.match(/--[^\n]*|'[^']*'|\b\d+(?:\.\d+)?\b|[A-Za-z_][A-Za-z0-9_.]*|::[a-z]+|\s+|[^\s]/g) || [];
+  return tokens.map((tok) => {
+    const low = tok.toLowerCase();
+    let cls = null;
+    if (tok.startsWith("--")) cls = "cmt";
+    else if (tok.startsWith("'")) cls = "str";
+    else if (/^\d/.test(tok)) cls = "num";
+    else if (tok.startsWith("::")) cls = "cast";
+    else if (KW.has(low)) cls = "kw";
+    else if (FN.has(low)) cls = "fn";
+    return cls ? `<span class="${cls}">${esc(tok)}</span>` : esc(tok);
+  }).join("");
+}
+
+// --- answer: pick out figures ($1.2B, 34.5%, 391,035) in gold ---
+function highlightAnswer(text) {
+  return esc(text).replace(/[+-]?\$?\d[\d,]*(?:\.\d+)?%?(?:\s?(?:billion|million|trillion|B|M|T)\b)?/g,
+    (m) => `<span class="figure">${m}</span>`);
+}
+
+// --- copy button ---
+let currentSql = "";
+$("#copy-btn").addEventListener("click", () => {
+  try { navigator.clipboard.writeText(currentSql); } catch {}
+  $("#copy-btn").textContent = "Copied ✓";
+  setTimeout(() => { $("#copy-btn").textContent = "Copy"; }, 1500);
+});
+
+// --- the console run ---
+let timers = [];
+const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
+const wait = (ms) => new Promise((res) => { const t = setTimeout(res, REDUCED ? 0 : ms); timers.push(t); });
 
 $("#ask-form").addEventListener("submit", (e) => { e.preventDefault(); ask(); });
 
 async function ask() {
   const question = $("#question").value.trim();
   if (question.length < 3) return;
+  clearTimers();
+  resetStages(); resetLog();
+  $("#output").hidden = true; $("#ctx-block").hidden = true; $("#diagnosing").hidden = true;
   const btn = $("#ask-btn");
-  btn.disabled = true;
-  $("#error").hidden = true;
-  $("#result").hidden = true;
-  $("#status").innerHTML = '<span class="spin"></span>Retrieving context, generating SQL, executing — retries happen automatically…';
+  btn.disabled = true; btn.textContent = "Running…";
+
+  setStage(0, "active");
+  logLine("info", `POST /query — "${question}"`);
+  // Optimistic progression while the request is in flight; the real attempt
+  // history is replayed from the response when it lands.
+  const opt1 = setTimeout(() => {
+    setStage(0, "done"); setStage(1, "active");
+    logLine("info", "retrieving schema + business glossary via pgvector…");
+  }, 900);
+  timers.push(opt1);
 
   const headers = { "Content-Type": "application/json" };
   const key = keyInput.value.trim();
   if (key) headers["X-API-Key"] = key;
 
+  let resp, body;
   try {
-    const resp = await fetch("/query", { method: "POST", headers, body: JSON.stringify({ question }) });
-    const body = await resp.json();
-    if (!resp.ok) {
-      const detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
-      showError(`HTTP ${resp.status}: ${detail}` + (body.request_id ? ` (request_id ${body.request_id})` : ""));
-      return;
-    }
-    render(body);
+    resp = await fetch("/query", { method: "POST", headers, body: JSON.stringify({ question }) });
+    body = await resp.json();
   } catch (err) {
-    showError(`Request failed: ${err.message}`);
-  } finally {
-    btn.disabled = false;
-    $("#status").textContent = "";
+    clearTimers();
+    setStage(0, "error");
+    logLine("error", `request failed: ${err.message}`);
+    btn.disabled = false; btn.textContent = "Run query";
+    return;
   }
+  clearTimers();
+
+  if (!resp.ok) {
+    const detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+    setStage(0, "error");
+    logLine("error", `HTTP ${resp.status} — ${detail}`);
+    btn.disabled = false; btn.textContent = "Run query";
+    return;
+  }
+
+  await replay(body);
+  btn.disabled = false; btn.textContent = "Run query";
 }
 
-function showError(msg) {
-  const el = $("#error");
-  el.textContent = msg;
-  el.hidden = false;
-}
+// Replay the response's real attempt history through the stage pills + log,
+// with short theatrical delays so the self-correction is legible.
+async function replay(r) {
+  resetStages(); resetLog();
+  const attempts = r.attempts || [];
+  setStage(0, "active");
+  logLine("info", `POST /query — "${r.question}"`);
+  await wait(350);
+  setStage(0, "done");
+  logLine("info", "retrieved schema + business glossary via pgvector");
 
-function render(r) {
-  $("#result").hidden = false;
-  $("#request-id").textContent = r.request_id || "—";
+  for (const a of attempts) {
+    if (a.correction_reasoning) {
+      setStage(1, "active"); setStage(2, "idle"); setStage(3, "idle");
+      const d = $("#diagnosing");
+      d.innerHTML = `<b>diagnosing</b> — ${esc(a.correction_reasoning)} <span style="color:var(--dim)">(attempt ${a.attempt_number} of 3)</span>`;
+      d.hidden = false;
+      logLine("info", `diagnosing — feeding the failure back to generate (${a.attempt_number}/3)`);
+      await wait(900);
+      d.hidden = true;
+    } else {
+      setStage(1, "active");
+      await wait(350);
+    }
 
-  const answer = $("#answer");
-  answer.textContent = r.answer || "(no answer)";
-  answer.className = "answer" + (r.success ? "" : " failed");
+    // show this attempt's SQL as soon as it is "generated"
+    currentSql = a.sql || "";
+    if (currentSql) { $("#sql-code").innerHTML = highlightSQL(currentSql); $("#output").hidden = false; }
+    setStage(1, "done"); setStage(2, "active");
+    logLine("attempt", `attempt ${a.attempt_number} — generated SQL (${a.duration_ms} ms)`);
+    await wait(350);
 
-  $("#final-sql-section").hidden = !r.sql;
-  if (r.sql) $("#final-sql").innerHTML = highlightSQL(r.sql);
+    if (a.outcome === "guard_rejected") {
+      setStage(2, "error");
+      logLine("error", `guard rejected: ${a.error_message || "not a read-only SELECT"}`);
+      await wait(500);
+      continue;
+    }
+    setStage(2, "done"); setStage(3, "active");
+    logLine("info", "validation passed — single read-only SELECT");
+    await wait(350);
 
-  renderRows(r.rows || []);
-  renderAttempts(r.attempts || []);
+    if (a.outcome === "execution_error") {
+      setStage(3, "error");
+      logLine("error", `ERROR: ${a.error_message || "execution failed"}`);
+      await wait(500);
+    } else if (a.outcome === "empty_result") {
+      setStage(3, "error");
+      logLine("error", "query ran but returned 0 rows — treating as a miss");
+      await wait(500);
+    } else if (a.outcome === "success") {
+      setStage(3, "done"); setStage(4, "active");
+      logLine("info", `executed · ${(r.rows || []).length} rows`);
+      await wait(350);
+      setStage(4, "done");
+      logLine("success", `answer synthesized on attempt ${a.attempt_number}`);
+    }
+  }
+
+  if (!r.success) logLine("error", "all attempts exhausted — returning what was tried");
+  renderOutput(r);
   renderContext(r.context_docs || []);
 }
 
-function renderRows(rows) {
-  const section = $("#rows-section");
-  section.hidden = rows.length === 0;
-  if (!rows.length) return;
-  $("#row-count").textContent = `(${rows.length} row${rows.length === 1 ? "" : "s"})`;
+function renderOutput(r) {
+  $("#output").hidden = false;
+  const answer = $("#answer");
+  answer.innerHTML = r.success ? highlightAnswer(r.answer || "") : esc(r.answer || "");
+  answer.className = r.success ? "" : "failed";
+
+  // Final SQL wins; on total failure keep the last attempt's SQL visible.
+  const finalSql = r.sql || (r.attempts?.length ? r.attempts[r.attempts.length - 1].sql : "");
+  currentSql = finalSql || "";
+  $("#sql-code").innerHTML = finalSql ? highlightSQL(finalSql) : '<span class="cmt">-- no SQL survived validation</span>';
+
+  const rows = r.rows || [];
+  const tableEl = $("#rows-table");
+  if (!rows.length) { tableEl.innerHTML = ""; return; }
   const cols = Object.keys(rows[0]);
   const fmt = (v) => {
-    if (v === null || v === undefined) return '<td class="muted">∅</td>';
-    if (typeof v === "number") return `<td class="num">${Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>`;
+    if (v === null || v === undefined) return "<td>∅</td>";
+    if (typeof v === "number") return `<td>${Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>`;
     return `<td>${esc(v)}</td>`;
   };
-  $("#rows-table").innerHTML =
+  tableEl.innerHTML =
     `<table><thead><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>` +
     `<tbody>${rows.map((row) => `<tr>${cols.map((c) => fmt(row[c])).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
-function renderAttempts(attempts) {
-  $("#attempt-count").textContent = `(${attempts.length} of max 3 attempts)`;
-  $("#attempts").innerHTML = attempts.map((a) => {
-    const badge = `<span class="badge ${esc(a.outcome)}">${OUTCOME_LABEL[a.outcome] || esc(a.outcome)}</span>`;
-    const why = a.correction_reasoning
-      ? `<div class="why"><b>Model's diagnosis before this attempt:</b> ${esc(a.correction_reasoning)}</div>` : "";
-    const err = a.error_message ? `<div class="errmsg">${esc(a.error_message)}</div>` : "";
-    const sql = a.sql ? `<pre class="sql">${highlightSQL(a.sql)}</pre>` : "";
-    return `<div class="attempt">
-      <div class="attempt-head"><strong>Attempt ${a.attempt_number}</strong> ${badge}
-        <span class="muted">${a.duration_ms} ms</span></div>
-      ${why}${sql}${err}
-    </div>`;
-  }).join("") || '<span class="muted">No attempts recorded.</span>';
-}
-
 function renderContext(docs) {
-  $("#context-docs").innerHTML = docs.map((d) => `
+  const block = $("#ctx-block");
+  block.hidden = docs.length === 0;
+  $("#ctx-docs").innerHTML = docs.map((d) => `
     <details>
-      <summary><strong>${esc(d.title)}</strong> <span class="muted">· ${esc(d.doc_type)}</span>
-        <span class="sim">similarity ${(d.similarity * 100).toFixed(1)}%</span></summary>
+      <summary><b>${esc(d.title)}</b> <span class="t">· ${esc(d.doc_type)}</span>
+        <span class="s">similarity ${(d.similarity * 100).toFixed(1)}%</span></summary>
       <pre>${esc(d.content)}</pre>
-    </details>`).join("") || '<span class="muted">No context docs returned.</span>';
+    </details>`).join("");
 }
 </script>
 </body>
