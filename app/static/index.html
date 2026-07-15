@@ -480,7 +480,7 @@ async function replay(r) {
     currentSql = a.sql || "";
     if (currentSql) { $("#sql-code").innerHTML = highlightSQL(currentSql); $("#output").hidden = false; }
     setStage(1, "done"); setStage(2, "active");
-    logLine("attempt", `attempt ${a.attempt_number} — generated SQL (${a.duration_ms} ms)`);
+    logLine("attempt", `attempt ${a.attempt_number} — generated SQL`);
     await wait(350);
 
     if (a.outcome === "guard_rejected") {
@@ -503,7 +503,8 @@ async function replay(r) {
       await wait(500);
     } else if (a.outcome === "success") {
       setStage(3, "done"); setStage(4, "active");
-      logLine("info", `executed · ${(r.rows || []).length} rows`);
+      const n = (r.rows || []).length;
+      logLine("info", `executed in ${a.duration_ms} ms · ${n} row${n === 1 ? "" : "s"}`);
       await wait(350);
       setStage(4, "done");
       logLine("success", `answer synthesized on attempt ${a.attempt_number}`);
