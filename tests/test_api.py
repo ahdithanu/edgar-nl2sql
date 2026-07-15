@@ -99,6 +99,35 @@ def test_unhandled_exception_returns_opaque_500(monkeypatch, make_query_response
 
 
 # ---------------------------------------------------------------------------
+# GET / (demo page)
+# ---------------------------------------------------------------------------
+
+
+def test_demo_page_served_at_root(client):
+    resp = client.get("/")
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    assert "edgar-" in resp.text  # the page title
+
+
+def test_demo_page_is_not_behind_api_key(monkeypatch, make_query_response):
+    """The static page stays public even when /query requires an API key."""
+    from app.config import get_settings
+
+    settings = get_settings().model_copy(update={"query_api_key": "topsecret"})
+    monkeypatch.setattr(main, "get_settings", lambda: settings)
+    monkeypatch.setattr(main, "check_health", lambda: True)
+
+    with TestClient(app) as client:
+        page = client.get("/")
+        gated = client.post("/query", json={"question": "needs a key now"})
+
+    assert page.status_code == 200
+    assert gated.status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # GET /health
 # ---------------------------------------------------------------------------
 

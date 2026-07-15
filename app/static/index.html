@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>edgar-nl2sql — ask SEC financial data in plain English</title>
+<style>
+  /* Single-file demo UI. No build step, no framework, no external assets —
+     the page exists to make the pipeline observable, not to be a product. */
+  :root {
+    --bg: #f6f7f9; --surface: #ffffff; --border: #e3e6ea;
+    --text: #1c2430; --muted: #5c6773; --accent: #2563eb; --accent-soft: #eff4ff;
+    --ok: #16803c; --ok-soft: #e8f5ec; --warn: #92600a; --warn-soft: #fdf3e0;
+    --err: #b3261e; --err-soft: #fdeceb; --neutral-soft: #eef0f3;
+    --code-bg: #0f172a; --code-text: #e2e8f0; --code-kw: #7dd3fc; --code-num: #fbbf24; --code-str: #86efac;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1116; --surface: #161b22; --border: #2a313b;
+      --text: #e6e9ee; --muted: #97a1ad; --accent: #6ea8fe; --accent-soft: #1a2740;
+      --ok: #4ade80; --ok-soft: #12291a; --warn: #fbbf24; --warn-soft: #2e2410;
+      --err: #f87171; --err-soft: #331512; --neutral-soft: #21262e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 24px 20px 64px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+  h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+  h1 .accent { color: var(--accent); }
+  .tagline { color: var(--muted); margin: 2px 0 20px; }
+  .meta { display: flex; align-items: center; gap: 14px; font-size: 13px; color: var(--muted); }
+  .meta a { color: var(--accent); text-decoration: none; }
+  #health-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #9ca3af; margin-right: 5px; vertical-align: 0; }
+  #health-dot.ok { background: var(--ok); } #health-dot.degraded { background: var(--warn); } #health-dot.down { background: var(--err); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+  form { display: flex; gap: 10px; }
+  input[type=text] {
+    flex: 1; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 15px;
+  }
+  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    padding: 10px 18px; border: 0; border-radius: 8px; background: var(--accent); color: #fff;
+    font-size: 15px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: 0.55; cursor: wait; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .chip {
+    background: var(--accent-soft); color: var(--accent); border: 0; border-radius: 999px;
+    padding: 5px 12px; font-size: 13px; font-weight: 500; cursor: pointer;
+  }
+  .keyrow { margin-top: 12px; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .keyrow input { flex: 0 1 260px; padding: 5px 9px; font-size: 13px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); }
+  #status { margin: 8px 0 16px; color: var(--muted); font-size: 14px; min-height: 20px; }
+  #status .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: r 0.8s linear infinite; margin-right: 7px; vertical-align: -1px; }
+  @keyframes r { to { transform: rotate(360deg); } }
+  .banner-err { background: var(--err-soft); color: var(--err); border: 1px solid var(--err); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin: 22px 0 8px; }
+  .answer { font-size: 17px; }
+  .answer.failed { color: var(--err); }
+  pre.sql {
+    background: var(--code-bg); color: var(--code-text); border-radius: 8px; padding: 12px 14px;
+    overflow-x: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 8px 0;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  pre.sql .kw { color: var(--code-kw); font-weight: 600; } pre.sql .num { color: var(--code-num); } pre.sql .str { color: var(--code-str); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th { background: var(--neutral-soft); font-weight: 600; }
+  .attempt { border-left: 3px solid var(--border); padding: 2px 0 2px 14px; margin: 0 0 14px 4px; }
+  .attempt-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .badge { font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
+  .badge.success { background: var(--ok-soft); color: var(--ok); }
+  .badge.execution_error, .badge.guard_rejected { background: var(--err-soft); color: var(--err); }
+  .badge.empty_result { background: var(--warn-soft); color: var(--warn); }
+  .attempt .why { background: var(--accent-soft); border-radius: 8px; padding: 8px 12px; font-size: 14px; margin: 6px 0; }
+  .attempt .why b { color: var(--accent); }
+  .attempt .errmsg { color: var(--err); font-size: 13px; font-family: ui-monospace, Menlo, monospace; margin: 4px 0; white-space: pre-wrap; }
+  .muted { color: var(--muted); font-size: 13px; }
+  details { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin-bottom: 8px; background: var(--surface); }
+  summary { cursor: pointer; font-size: 14px; }
+  summary .sim { color: var(--muted); font-size: 12px; }
+  details pre { white-space: pre-wrap; font-size: 13px; color: var(--muted); margin: 8px 0 2px; }
+  footer { margin-top: 40px; font-size: 13px; color: var(--muted); }
+  .tablewrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>edgar-<span class="accent">nl2sql</span></h1>
+    <div class="meta">
+      <span><span id="health-dot"></span><span id="health-label">checking…</span></span>
+      <a href="/docs">API docs</a>
+    </div>
+  </header>
+  <p class="tagline">Ask a question about SEC EDGAR financial data in plain English. Watch the system retrieve context, generate SQL with Claude, and self-correct when it gets it wrong.</p>
+
+  <div class="card">
+    <form id="ask-form">
+      <input type="text" id="question" placeholder="e.g. What was Apple's revenue in fiscal 2023?" minlength="3" maxlength="1000" required>
+      <button type="submit" id="ask-btn">Ask</button>
+    </form>
+    <div class="chips" id="chips"></div>
+    <div class="keyrow">
+      <label for="api-key">API key (if this deployment requires one):</label>
+      <input type="password" id="api-key" placeholder="X-API-Key" autocomplete="off">
+    </div>
+  </div>
+
+  <div id="status"></div>
+  <div id="error" class="banner-err" hidden></div>
+  <div id="result" hidden>
+    <h2>Answer</h2>
+    <div class="card"><div class="answer" id="answer"></div></div>
+    <div id="final-sql-section">
+      <h2>Final SQL</h2>
+      <pre class="sql" id="final-sql"></pre>
+    </div>
+    <div id="rows-section">
+      <h2>Results <span class="muted" id="row-count"></span></h2>
+      <div class="card tablewrap" id="rows-table"></div>
+    </div>
+    <h2>Self-correction timeline <span class="muted" id="attempt-count"></span></h2>
+    <div class="card" id="attempts"></div>
+    <h2>Retrieved context (injected into the prompt before generation)</h2>
+    <div id="context-docs"></div>
+    <p class="muted">request_id: <span id="request-id"></span></p>
+  </div>
+
+  <footer>
+    FastAPI · Supabase Postgres + pgvector · Voyage AI embeddings · Claude SQL generation ·
+    retrieval happens <em>before</em> generation · retries capped at 3 by design.
+  </footer>
+</div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+
+const EXAMPLES = [
+  "What was Apple's revenue in fiscal 2023?",
+  "Which company had the highest net income in 2024?",
+  "What was Microsoft's net margin in fiscal 2023?",
+  "How did NVIDIA's revenue grow from 2023 to 2024?",
+  "Compare Amazon and Walmart's revenue in 2022",
+];
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// Cosmetic SQL highlighting — runs on already-escaped text, keywords only.
+const SQL_KW = /\b(SELECT|FROM|WHERE|JOIN|INNER|LEFT|RIGHT|OUTER|ON|GROUP BY|ORDER BY|HAVING|LIMIT|OFFSET|WITH|AS|AND|OR|NOT|IN|IS|NULL|DISTINCT|CASE|WHEN|THEN|ELSE|END|UNION|ALL|DESC|ASC|BETWEEN|LIKE|ILIKE|SUM|AVG|COUNT|MIN|MAX|ROUND|COALESCE|NULLIF|CAST|EXTRACT|FILTER|OVER|PARTITION BY|LAG|LEAD)\b/gi;
+function highlightSQL(sql) {
+  let h = esc(sql);
+  h = h.replace(/&#39;(?:[^&]|&(?!#39;))*?&#39;/g, (m) => `<span class="str">${m}</span>`);
+  h = h.replace(SQL_KW, (m) => `<span class="kw">${m}</span>`);
+  // Lookbehind: never match the digits inside HTML entities like &#39;
+  h = h.replace(/(?<!&#)\b\d+(\.\d+)?\b/g, (m) => `<span class="num">${m}</span>`);
+  return h;
+}
+
+const OUTCOME_LABEL = {
+  success: "success",
+  guard_rejected: "rejected by SQL guard",
+  execution_error: "execution error",
+  empty_result: "empty result",
+};
+
+// --- API key persistence (demo convenience only; key lives in localStorage) ---
+const keyInput = $("#api-key");
+keyInput.value = localStorage.getItem("edgar_api_key") || "";
+keyInput.addEventListener("change", () => localStorage.setItem("edgar_api_key", keyInput.value.trim()));
+
+// --- health pill ---
+(async function health() {
+  const dot = $("#health-dot"), label = $("#health-label");
+  try {
+    const r = await fetch("/health");
+    const body = await r.json();
+    dot.className = body.status === "ok" ? "ok" : "degraded";
+    label.textContent = body.status === "ok" ? "healthy" : "degraded (database unreachable)";
+  } catch {
+    dot.className = "down";
+    label.textContent = "unreachable";
+  }
+})();
+
+// --- example chips ---
+for (const q of EXAMPLES) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "chip"; b.textContent = q;
+  b.addEventListener("click", () => { $("#question").value = q; ask(); });
+  $("#chips").appendChild(b);
+}
+
+$("#ask-form").addEventListener("submit", (e) => { e.preventDefault(); ask(); });
+
+async function ask() {
+  const question = $("#question").value.trim();
+  if (question.length < 3) return;
+  const btn = $("#ask-btn");
+  btn.disabled = true;
+  $("#error").hidden = true;
+  $("#result").hidden = true;
+  $("#status").innerHTML = '<span class="spin"></span>Retrieving context, generating SQL, executing — retries happen automatically…';
+
+  const headers = { "Content-Type": "application/json" };
+  const key = keyInput.value.trim();
+  if (key) headers["X-API-Key"] = key;
+
+  try {
+    const resp = await fetch("/query", { method: "POST", headers, body: JSON.stringify({ question }) });
+    const body = await resp.json();
+    if (!resp.ok) {
+      const detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+      showError(`HTTP ${resp.status}: ${detail}` + (body.request_id ? ` (request_id ${body.request_id})` : ""));
+      return;
+    }
+    render(body);
+  } catch (err) {
+    showError(`Request failed: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    $("#status").textContent = "";
+  }
+}
+
+function showError(msg) {
+  const el = $("#error");
+  el.textContent = msg;
+  el.hidden = false;
+}
+
+function render(r) {
+  $("#result").hidden = false;
+  $("#request-id").textContent = r.request_id || "—";
+
+  const answer = $("#answer");
+  answer.textContent = r.answer || "(no answer)";
+  answer.className = "answer" + (r.success ? "" : " failed");
+
+  $("#final-sql-section").hidden = !r.sql;
+  if (r.sql) $("#final-sql").innerHTML = highlightSQL(r.sql);
+
+  renderRows(r.rows || []);
+  renderAttempts(r.attempts || []);
+  renderContext(r.context_docs || []);
+}
+
+function renderRows(rows) {
+  const section = $("#rows-section");
+  section.hidden = rows.length === 0;
+  if (!rows.length) return;
+  $("#row-count").textContent = `(${rows.length} row${rows.length === 1 ? "" : "s"})`;
+  const cols = Object.keys(rows[0]);
+  const fmt = (v) => {
+    if (v === null || v === undefined) return '<td class="muted">∅</td>';
+    if (typeof v === "number") return `<td class="num">${Number.isInteger(v) ? v.toLocaleString() : v.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>`;
+    return `<td>${esc(v)}</td>`;
+  };
+  $("#rows-table").innerHTML =
+    `<table><thead><tr>${cols.map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>` +
+    `<tbody>${rows.map((row) => `<tr>${cols.map((c) => fmt(row[c])).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+function renderAttempts(attempts) {
+  $("#attempt-count").textContent = `(${attempts.length} of max 3 attempts)`;
+  $("#attempts").innerHTML = attempts.map((a) => {
+    const badge = `<span class="badge ${esc(a.outcome)}">${OUTCOME_LABEL[a.outcome] || esc(a.outcome)}</span>`;
+    const why = a.correction_reasoning
+      ? `<div class="why"><b>Model's diagnosis before this attempt:</b> ${esc(a.correction_reasoning)}</div>` : "";
+    const err = a.error_message ? `<div class="errmsg">${esc(a.error_message)}</div>` : "";
+    const sql = a.sql ? `<pre class="sql">${highlightSQL(a.sql)}</pre>` : "";
+    return `<div class="attempt">
+      <div class="attempt-head"><strong>Attempt ${a.attempt_number}</strong> ${badge}
+        <span class="muted">${a.duration_ms} ms</span></div>
+      ${why}${sql}${err}
+    </div>`;
+  }).join("") || '<span class="muted">No attempts recorded.</span>';
+}
+
+function renderContext(docs) {
+  $("#context-docs").innerHTML = docs.map((d) => `
+    <details>
+      <summary><strong>${esc(d.title)}</strong> <span class="muted">· ${esc(d.doc_type)}</span>
+        <span class="sim">similarity ${(d.similarity * 100).toFixed(1)}%</span></summary>
+      <pre>${esc(d.content)}</pre>
+    </details>`).join("") || '<span class="muted">No context docs returned.</span>';
+}
+</script>
+</body>
+</html>

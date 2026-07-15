@@ -30,11 +30,12 @@ import uuid
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.config import get_settings
 from app.db import check_health, close_pool
@@ -176,6 +177,22 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         content={"detail": "Internal server error.", "request_id": request_id},
         headers={REQUEST_ID_HEADER: request_id},
     )
+
+
+_DEMO_PAGE = Path(__file__).parent / "static" / "index.html"
+
+
+@app.get("/", include_in_schema=False)
+def demo_page() -> FileResponse:
+    """Serve the single-file demo UI.
+
+    A plain FileResponse rather than a StaticFiles mount: there is exactly one
+    asset, and mounting a directory at ``/`` would shadow the API routes.
+    Deliberately outside the API-key gate — the page is free static HTML with
+    zero cost surface; the /query calls it makes are still gated and
+    rate-limited like any other client's.
+    """
+    return FileResponse(_DEMO_PAGE, media_type="text/html")
 
 
 @app.post("/query", response_model=QueryResponse)

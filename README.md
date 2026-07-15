@@ -91,7 +91,13 @@ python scripts/build_embeddings.py
 uvicorn app.main:app --reload
 ```
 
-Then:
+Then open **http://localhost:8000/** — a single-file demo UI that makes the pipeline
+observable: the answer, the final SQL, the result rows, a self-correction timeline
+(every attempt's SQL, outcome, and the model's diagnosis before each retry), and the
+retrieved context docs that were injected into the prompt. No build step, no framework;
+it exists so the retry loop can be *seen*, not just read about in JSON.
+
+Or from the terminal:
 
 ```bash
 curl -s localhost:8000/health
