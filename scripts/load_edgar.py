@@ -46,7 +46,7 @@ import argparse
 import datetime as dt
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import httpx
@@ -94,12 +94,33 @@ METRIC_TAGS: dict[str, list[str]] = {
         "RevenueFromContractWithCustomerExcludingAssessedTax",
         "Revenues",
         "SalesRevenueNet",
+        "RevenuesNetOfInterestExpense",   # banks (GS, JPM) report "total net revenues"
     ],
-    "net_income": ["NetIncomeLoss"],
+    "net_income": [
+        "NetIncomeLoss",
+        # Some filers switched tags mid-history (MA stopped using NetIncomeLoss
+        # in 2014); the per-period merge fills those years from the successors.
+        "NetIncomeLossAvailableToCommonStockholdersBasic",
+        "ProfitLoss",
+    ],
     "total_assets": ["Assets"],
+    # Several filers (WMT, KO, MCD, DIS, AMZN) never tag total Liabilities
+    # directly — see the derived-liabilities fallback in select_metric_periods.
     "total_liabilities": ["Liabilities"],
+    # NOTE: Visa's companyfacts exposes no usable diluted-EPS tag at all —
+    # a documented source-data gap, not a loader bug.
     "eps_diluted": ["EarningsPerShareDiluted"],
 }
+
+# Balance-sheet identity used when a filer never tags `Liabilities`:
+# liabilities = (liabilities + equity) - equity. The including-NCI equity tag
+# comes first — for filers with noncontrolling interests (e.g. WMT), plain
+# StockholdersEquity would overstate liabilities by the NCI amount.
+_LIABILITIES_TOTAL_TAG = "LiabilitiesAndStockholdersEquity"
+_EQUITY_TAGS = [
+    "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+    "StockholdersEquity",
+]
 METRICS: list[str] = list(METRIC_TAGS)
 
 # Flow metrics accumulate over a period (have start+end); instants are
@@ -350,6 +371,25 @@ def select_metric_periods(company_facts: dict, metric: str) -> dict[tuple[int, s
     for tag in METRIC_TAGS[metric]:
         for key, fact in select_periods(extract_facts(company_facts, metric, tag), metric).items():
             selected.setdefault(key, fact)  # earlier (more specific) tag wins per period
+
+    if metric == "total_liabilities":
+        # Derived fallback: filers like WMT/KO/MCD/DIS never tag Liabilities,
+        # but always tag the balance-sheet total and equity. Compute
+        # liabilities = total - equity for any period still missing, requiring
+        # both facts to snapshot the same date so we never mix periods.
+        totals = select_periods(
+            extract_facts(company_facts, metric, _LIABILITIES_TOTAL_TAG), metric
+        )
+        equities: dict[tuple[int, str], Fact] = {}
+        for tag in _EQUITY_TAGS:
+            for key, fact in select_periods(extract_facts(company_facts, metric, tag), metric).items():
+                equities.setdefault(key, fact)
+        for key, total in totals.items():
+            equity = equities.get(key)
+            if key in selected or equity is None or total.end != equity.end:
+                continue
+            selected[key] = replace(total, value=total.value - equity.value)
+
     return selected
 
 
@@ -400,14 +440,25 @@ def derive_q4(selected: dict[tuple[int, str], Fact], metric: str, ticker: str) -
 # Per-company orchestration
 # --------------------------------------------------------------------------
 
+# SEC's ticker map can point at a newly created holding entity after a
+# corporate reorg (2026's "ExxonMobil Holdings Corp") whose fresh CIK carries
+# none of the operating company's filing history. Pin such tickers to the CIK
+# that actually holds the FY2020-2024 filings.
+CIK_OVERRIDES: dict[str, tuple[str, str]] = {
+    "XOM": ("0000034088", "Exxon Mobil Corp"),
+}
+
+
 def fetch_cik_map(client: EdgarClient) -> dict[str, tuple[str, str]]:
     """ticker -> (zero-padded 10-digit CIK, company title)."""
     raw = client.get_json(TICKER_MAP_URL)
     # File shape: {"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}, ...}
-    return {
+    mapping = {
         entry["ticker"].upper(): (f"{int(entry['cik_str']):010d}", entry["title"])
         for entry in raw.values()
     }
+    mapping.update(CIK_OVERRIDES)
+    return mapping
 
 
 def process_company(client: EdgarClient, ticker: str, cik: str, name: str) -> CompanyLoad:

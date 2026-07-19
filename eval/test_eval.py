@@ -101,16 +101,45 @@ def _cells_match(expected: Any, actual: Any, check: str) -> bool:
     return expected == actual
 
 
+def _row_contains(expected_row: tuple, actual_row: tuple, check: str) -> bool:
+    """True if every expected cell matches a DISTINCT cell of the actual row.
+
+    Containment, not equality: the pipeline legitimately returns richer rows
+    than the minimal reference SQL (e.g. reference selects just `ticker`,
+    the model also includes `name` and the metric value). Requiring identical
+    column counts would fail correct answers for being more informative.
+    """
+    remaining = list(actual_row)
+    for exp in expected_row:
+        for i, act in enumerate(remaining):
+            if _cells_match(exp, act, check):
+                del remaining[i]
+                break
+        else:
+            return False
+    return True
+
+
 def rowsets_match(expected: list[dict], actual: list[dict], check: str) -> bool:
-    """Order-insensitive result-set comparison with per-cell tolerance."""
+    """Order-insensitive result-set comparison with per-cell tolerance.
+
+    Row counts must match exactly (a correct answer has no missing or extra
+    rows); within a row, the pipeline may return a superset of the reference
+    columns (see _row_contains). Rows pair greedily, each used at most once.
+    """
     exp_rows = _normalize_rows(expected)
     act_rows = _normalize_rows(actual)
     if len(exp_rows) != len(act_rows):
         return False
-    return all(
-        len(e) == len(a) and all(_cells_match(ec, ac, check) for ec, ac in zip(e, a))
-        for e, a in zip(exp_rows, act_rows)
-    )
+    unused = list(act_rows)
+    for e in exp_rows:
+        for i, a in enumerate(unused):
+            if _row_contains(e, a, check):
+                del unused[i]
+                break
+        else:
+            return False
+    return True
 
 
 # ---------------------------------------------------------------------------

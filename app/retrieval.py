@@ -41,6 +41,8 @@ embeddings, so there is no separate vector store to deploy or drift.
 
 from __future__ import annotations
 
+import time
+
 import voyageai
 
 from app.config import get_settings
@@ -49,6 +51,14 @@ from app.logging_config import get_logger
 from app.models import ContextDoc
 
 logger = get_logger(__name__)
+
+# Bounded backoff for embedding-provider rate limits. Voyage's free tier
+# without a payment method allows only 3 requests/minute, and even paid tiers
+# can 429 under bursts — one embed call per query means a single 429 would
+# otherwise kill the whole request before generation ever ran. Three waits
+# capped at ~75s total keeps us inside a 3 RPM window without retrying forever.
+_EMBED_RATE_LIMIT_RETRIES = 3
+_EMBED_BACKOFF_SECONDS = (5.0, 25.0, 45.0)
 
 # Lazily-constructed module-level client. Lazy because importing this module
 # must not require a VOYAGE_API_KEY (unit tests import and mock it); module
@@ -73,12 +83,29 @@ def embed_query(text: str) -> list[float]:
     question→document matching versus embedding both sides identically.
     """
     settings = get_settings()
-    result = _get_voyage_client().embed(
-        [text],
-        model=settings.embed_model,
-        input_type="query",
-    )
-    return result.embeddings[0]
+    for attempt in range(_EMBED_RATE_LIMIT_RETRIES + 1):
+        try:
+            result = _get_voyage_client().embed(
+                [text],
+                model=settings.embed_model,
+                input_type="query",
+            )
+            return result.embeddings[0]
+        except Exception as exc:
+            # Duck-typed rate-limit detection: voyageai raises RateLimitError,
+            # but matching on class name + message keeps this robust across
+            # SDK versions without importing private exception hierarchies.
+            is_rate_limit = "ratelimit" in type(exc).__name__.lower() or "rate limit" in str(exc).lower()
+            if not is_rate_limit or attempt == _EMBED_RATE_LIMIT_RETRIES:
+                raise
+            delay = _EMBED_BACKOFF_SECONDS[attempt]
+            logger.warning(
+                "embed_rate_limited",
+                attempt=attempt + 1,
+                retry_in_s=delay,
+            )
+            time.sleep(delay)
+    raise RuntimeError("unreachable")  # loop always returns or raises
 
 
 def retrieve_context(question: str, k: int | None = None) -> list[ContextDoc]:
