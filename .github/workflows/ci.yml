@@ -86,6 +86,36 @@ jobs:
       - name: Install package with dev dependencies
         run: pip install -e ".[dev]"
 
+      # TEMP DIAGNOSTIC — remove once the CI generation failure is understood.
+      - name: Provider connectivity check
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os, traceback, httpx, anthropic
+          key = os.environ.get("ANTHROPIC_API_KEY", "")
+          print("key len:", len(key), "prefix:", key[:12], "has_ws:", any(c.isspace() for c in key))
+          print("ANTHROPIC_BASE_URL:", os.environ.get("ANTHROPIC_BASE_URL", "<unset>"))
+          try:
+              r = httpx.get("https://api.anthropic.com/v1/models",
+                            headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
+                            timeout=20)
+              print("raw httpx status:", r.status_code, r.text[:200])
+          except Exception:
+              print("raw httpx FAILED:"); traceback.print_exc()
+          try:
+              c = anthropic.Anthropic(api_key=key)
+              m = c.messages.create(model="claude-sonnet-5", max_tokens=10,
+                                    messages=[{"role": "user", "content": "say ok"}])
+              print("sdk OK:", m.content[0].text[:20])
+          except Exception as e:
+              print("sdk FAILED:", type(e).__name__, e)
+              print("__cause__:", repr(getattr(e, "__cause__", None)))
+              traceback.print_exc()
+          PY
+
       # RUN_EVAL=1 un-skips the eval suite; it runs the FULL pipeline (retrieval,
       # generation, retry loop, execution) against live services and asserts
       # accuracy >= EVAL_MIN_ACCURACY. A quality regression fails CI — this is the
