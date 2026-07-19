@@ -72,7 +72,7 @@ Prereqs: Python 3.12, a Supabase project (pgvector is available out of the box),
 an Anthropic API key, a Voyage AI API key.
 
 ```bash
-git clone <this-repo> && cd edgar-nl2sql
+git clone https://github.com/ahdithanu/edgar-nl2sql.git && cd edgar-nl2sql
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
