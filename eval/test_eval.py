@@ -68,6 +68,13 @@ with GOLDEN_SET_PATH.open() as f:
 # summary test (which runs last — pytest preserves file order) reads it.
 RESULTS: dict[str, bool] = {}
 
+# Diagnostics for misses, keyed by item id. These are printed by the SUMMARY
+# test rather than by the per-item test, because pytest captures stdout for
+# passing tests — and per-item tests now pass by design (the gate is aggregate).
+# Printing from the failing summary test is what makes a CI failure debuggable
+# without re-running anything.
+DIAGNOSTICS: dict[str, str] = {}
+
 
 # ---------------------------------------------------------------------------
 # Row-set comparison
@@ -175,12 +182,11 @@ def test_golden_item(item: dict) -> None:
         )
         RESULTS[item["id"]] = passed
         if not passed:
-            # Reported, not raised — see the rationale on the main path below.
-            print(
-                f"\n  MISS [{item['id']}] expected graceful failure, got "
-                f"success={response.success}\n"
-                f"    answer: {response.answer!r}\n"
-                f"    attempt outcomes: {[a.outcome for a in response.attempts]}"
+            # Recorded, not raised — see the rationale on the main path below.
+            DIAGNOSTICS[item["id"]] = (
+                f"expected graceful failure, got success={response.success}\n"
+                f"      answer: {response.answer!r}\n"
+                f"      attempt outcomes: {[a.outcome for a in response.attempts]}"
             )
         return
 
@@ -203,13 +209,18 @@ def test_golden_item(item: dict) -> None:
     # aggregate and trips the gate; noise does not. Full diagnostics still print
     # so a miss is never silent.
     if not passed:
-        print(
-            f"\n  MISS [{item['id']}]\n"
-            f"    question:  {item['question']}\n"
-            f"    pipeline sql:  {response.sql}\n"
-            f"    pipeline rows ({len(response.rows)}): {response.rows[:5]}\n"
-            f"    expected rows ({len(expected_rows)}): {expected_rows[:5]}\n"
-            f"    attempt outcomes: {[a.outcome for a in response.attempts]}"
+        last_error = next(
+            (a.error_message for a in reversed(response.attempts) if a.error_message),
+            None,
+        )
+        DIAGNOSTICS[item["id"]] = (
+            f"question: {item['question']}\n"
+            f"      pipeline success: {response.success}\n"
+            f"      pipeline sql: {response.sql}\n"
+            f"      pipeline rows ({len(response.rows)}): {response.rows[:3]}\n"
+            f"      expected rows ({len(expected_rows)}): {expected_rows[:3]}\n"
+            f"      attempt outcomes: {[a.outcome for a in response.attempts]}\n"
+            f"      last error: {last_error}"
         )
 
 
@@ -239,6 +250,15 @@ def test_zz_accuracy_summary() -> None:
     print("-" * 66)
     print(f"  accuracy: {passed}/{total} = {accuracy:.1%} (gate: {min_accuracy:.0%})")
     print("=" * 66)
+
+    # Print every miss's detail HERE, from the test that actually fails, so the
+    # reason is visible in CI logs without a re-run. (pytest swallows stdout
+    # from the per-item tests because they pass by design.)
+    if DIAGNOSTICS:
+        print("\n--- MISS DETAILS " + "-" * 49)
+        for item_id, detail in DIAGNOSTICS.items():
+            print(f"\n  [{item_id}] {detail}")
+        print("-" * 66)
 
     assert accuracy >= min_accuracy, (
         f"accuracy {accuracy:.1%} is below the EVAL_MIN_ACCURACY gate "
