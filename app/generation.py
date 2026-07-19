@@ -48,6 +48,25 @@ _SYNTHESIS_MAX_TOKENS = 500
 _MAX_ERROR_CHARS = 500
 _MAX_ROWS_IN_PROMPT = 50
 
+# The model's refusal protocol (see _SYSTEM_PROMPT). Matched before any SQL
+# extraction so a refusal can never be parsed as a query.
+_CANNOT_ANSWER_RE = re.compile(r"^\s*CANNOT_ANSWER:\s*(.+)$", re.MULTILINE)
+
+
+class UnanswerableQuestionError(Exception):
+    """The model reported the question cannot be answered from this schema.
+
+    WHY this is its own exception rather than a generic failure: it is a
+    *conclusion*, not an error. Retrying wastes LLM calls and — as the eval
+    caught — actively pressures the model into manufacturing a fake row
+    (e.g. `SELECT '<prose>' AS answer`) just to satisfy the loop. The
+    pipeline short-circuits on this and reports an honest failure instead.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
 _SQL_FENCE_RE = re.compile(r"```sql\s*(.+?)```", re.DOTALL | re.IGNORECASE)
 _ANY_FENCE_RE = re.compile(r"```\s*(.+?)```", re.DOTALL)
 
@@ -59,7 +78,11 @@ Rules:
 - Use ONLY the tables, columns, and semantics described in the provided context documents. Do not invent tables or columns.
 - Match filters to the exact stored values described in the context (e.g. metric names like 'net_income', fiscal_period values like 'FY' or 'Q2', tickers are uppercase).
 - Prefer explicit JOINs and readable formatting. Alias aggregate/computed columns clearly.
-- Put the SQL in a ```sql fenced code block."""
+- Put the SQL in a ```sql fenced code block.
+- If the question CANNOT be answered from the described schema (it asks about data this
+  database does not hold), do NOT invent a query and do NOT return prose inside a SELECT
+  literal. Reply with exactly one line, no code block:
+  CANNOT_ANSWER: <one sentence explaining what data would be needed and why it is absent>"""
 
 
 def _get_anthropic_client() -> anthropic.Anthropic:
@@ -97,7 +120,15 @@ def _extract_sql(text: str) -> str:
        model that ignored fencing entirely.
     Raises ValueError if no SQL-shaped content is found, which the pipeline
     treats as a failed attempt (never a crash).
+
+    Raises UnanswerableQuestionError when the model used the CANNOT_ANSWER
+    protocol — checked FIRST, because that reply is a deliberate refusal and
+    must never be retried or mistaken for a malformed response.
     """
+    refusal = _CANNOT_ANSWER_RE.search(text)
+    if refusal:
+        raise UnanswerableQuestionError(refusal.group(1).strip())
+
     match = _SQL_FENCE_RE.search(text)
     if match:
         return match.group(1).strip()

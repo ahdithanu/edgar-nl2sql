@@ -23,6 +23,8 @@ import os
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 # --- Step 0: make `app` importable regardless of how pytest was invoked. ---
 # pytest only puts the *test* directory on sys.path when there is no
 # __init__.py; the repo root (which contains the `app` package) is what we
@@ -33,9 +35,19 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 # --- Step 1: dummy env vars BEFORE any app import. ---
-# `setdefault` so a developer's real .env / shell env still wins; the values
-# below are syntactically valid but point nowhere — if any test accidentally
-# opens a real connection it will fail fast rather than silently hit prod.
+# Load a real .env FIRST if one exists. WHY this matters: pytest imports every
+# conftest.py during collection, so this module runs even when only the eval
+# suite is selected — and because environment variables outrank .env in
+# pydantic-settings, a dummy DATABASE_URL set here would silently hijack the
+# eval run's real credentials and fail it with connection errors.
+# Loading .env first makes the `setdefault` calls below do what they always
+# claimed to: apply ONLY when nothing real is configured (the hermetic CI unit
+# job), while a developer's .env or CI's real secrets win everywhere else.
+load_dotenv(Path(ROOT) / ".env")
+
+# The values below are syntactically valid but point nowhere — if any unit test
+# accidentally opens a real connection it fails fast rather than silently
+# reaching a live service.
 os.environ.setdefault("DATABASE_URL", "postgresql://unit:unit@127.0.0.1:5/unittest")
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-anthropic-key-not-real")
 os.environ.setdefault("VOYAGE_API_KEY", "test-voyage-key-not-real")

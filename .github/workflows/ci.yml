@@ -93,7 +93,7 @@ jobs:
       - name: Run eval suite
         env:
           RUN_EVAL: "1"
-          EVAL_MIN_ACCURACY: "0.75"
+          EVAL_MIN_ACCURACY: "0.85"
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}

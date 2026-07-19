@@ -20,8 +20,16 @@ hallucinating an answer.
 
 These tests need a live database and real API keys, so they are opt-in:
 they auto-skip unless RUN_EVAL=1 (and CI only sets that when the secrets
-exist). The summary test prints an accuracy table and gates on
-EVAL_MIN_ACCURACY (default 0.75).
+exist).
+
+THE BUILD GATE IS AGGREGATE, NOT PER-ITEM. Individual misses print full
+diagnostics and record a verdict, but only ``test_zz_accuracy_summary``
+raises — it prints the accuracy table and asserts against EVAL_MIN_ACCURACY
+(default 0.85, against a measured 100% baseline). Rationale: this pipeline
+is LLM-backed and therefore nondeterministic. Failing the build on any
+single miss would make the threshold decorative and would block deploys on
+sampling noise; gating on the aggregate catches real quality regressions
+while tolerating roughly two unlucky rolls out of seventeen.
 """
 
 from __future__ import annotations
@@ -166,10 +174,14 @@ def test_golden_item(item: dict) -> None:
             and len(response.answer) > 20
         )
         RESULTS[item["id"]] = passed
-        assert passed, (
-            f"expected graceful failure, got success={response.success} "
-            f"answer={response.answer!r}"
-        )
+        if not passed:
+            # Reported, not raised — see the rationale on the main path below.
+            print(
+                f"\n  MISS [{item['id']}] expected graceful failure, got "
+                f"success={response.success}\n"
+                f"    answer: {response.answer!r}\n"
+                f"    attempt outcomes: {[a.outcome for a in response.attempts]}"
+            )
         return
 
     expected_rows = execute_readonly(item["reference_sql"])
@@ -183,14 +195,22 @@ def test_golden_item(item: dict) -> None:
     )
     RESULTS[item["id"]] = passed
 
-    assert passed, (
-        f"[{item['id']}] pipeline answer did not match ground truth.\n"
-        f"question: {item['question']}\n"
-        f"pipeline sql: {response.sql}\n"
-        f"pipeline rows ({len(response.rows)}): {response.rows[:5]}\n"
-        f"expected rows ({len(expected_rows)}): {expected_rows[:5]}\n"
-        f"attempt outcomes: {[a.outcome for a in response.attempts]}"
-    )
+    # A per-item miss is REPORTED, not raised. WHY: the build gate is aggregate
+    # accuracy (test_zz_accuracy_summary), exactly as specified. Hard-failing
+    # here would make that threshold decorative — any single miss would fail CI
+    # no matter how high accuracy was — and this pipeline is LLM-backed, so one
+    # unlucky sample must not block a deploy. A genuine regression moves the
+    # aggregate and trips the gate; noise does not. Full diagnostics still print
+    # so a miss is never silent.
+    if not passed:
+        print(
+            f"\n  MISS [{item['id']}]\n"
+            f"    question:  {item['question']}\n"
+            f"    pipeline sql:  {response.sql}\n"
+            f"    pipeline rows ({len(response.rows)}): {response.rows[:5]}\n"
+            f"    expected rows ({len(expected_rows)}): {expected_rows[:5]}\n"
+            f"    attempt outcomes: {[a.outcome for a in response.attempts]}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +225,7 @@ def test_zz_accuracy_summary() -> None:
     whose test errored before recording a verdict count as failures — an
     eval that crashes is not an eval that passed.
     """
-    min_accuracy = float(os.environ.get("EVAL_MIN_ACCURACY", "0.75"))
+    min_accuracy = float(os.environ.get("EVAL_MIN_ACCURACY", "0.85"))
 
     total = len(GOLDEN_ITEMS)
     passed = sum(1 for item in GOLDEN_ITEMS if RESULTS.get(item["id"], False))

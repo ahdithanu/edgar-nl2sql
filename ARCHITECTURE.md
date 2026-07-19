@@ -163,8 +163,14 @@ question, and compares result sets (1% tolerance on numeric cells). This matters
 because the data gets reloaded from EDGAR; pinned constants would rot, but reference
 SQL stays true.
 
-CI enforces `accuracy >= EVAL_MIN_ACCURACY` (0.75 to start; to be raised once the
-baseline is measured — see the TODO in the README). The point: in an LLM system,
+CI enforces `accuracy >= EVAL_MIN_ACCURACY`, set to **0.85** against a measured baseline
+of **17/17 = 100%** (reproduced on two consecutive runs). Two deliberate choices there.
+The floor sits *below* the baseline because the pipeline is LLM-backed and therefore
+nondeterministic — a gate set at the baseline would fail on sampling noise and train
+everyone to ignore it. And the gate is on **aggregate** accuracy rather than per item:
+individual misses print full diagnostics but only the summary test fails the build, so one
+unlucky roll cannot block a deploy while a genuine regression — which moves several items
+at once — still trips it. The point: in an LLM system,
 **correctness is a distribution, not a boolean**. Unit tests prove the plumbing
 (the guard rejects DML, the retry loop caps at 3); only an executed eval can prove the
 system still *answers questions correctly* after a prompt tweak, a model upgrade, or a
@@ -208,13 +214,150 @@ Scope discipline is a feature. Missing things below are decisions, not oversight
 - **No admin UI.** `context_docs` and `attempts` in the JSON response, plus structured
   logs, are the observability story. A dashboard would be decoration at this scale.
 
-## Appendix: a worked self-correction example
+## Appendix A: a worked self-correction example
 
-<!-- TODO(post-deploy): Replace this block with a REAL example pulled from production
-     structlog output after first deployment — the `sql_attempt` events for a request
-     where attempt 1 failed (ideally an execution_error or empty_result) and attempt 2
-     succeeded. Show: the question, attempt 1 SQL + error, the model's
-     correction_reasoning, attempt 2 SQL, and the final answer. Real logs only —
-     do not fabricate an example. -->
+All three transcripts below are copied from real `sql_attempt` log events on the live
+system (2026-07-19). Nothing is invented.
 
-_To be added from real request logs after the first deployment._
+Once the corpus is properly loaded, the system answers essentially every golden question
+on the first attempt — good for accuracy, inconvenient for demonstrating the retry loop.
+So this example uses **fault injection**: the retrieved context was replaced with a doc
+that describes a `net_margin` column which does not exist. Everything downstream — the
+prompt, the guard, the database, the retry loop — is the ordinary production path. This
+simulates the realistic failure where documentation has drifted from the actual schema.
+
+**Question:** _"What was Apple's net margin in fiscal 2023?"_
+
+**Attempt 1** (2,988 ms) — trusts the (bad) context and selects the column it was told about:
+
+```sql
+SELECT c.ticker, c.name, fm.fiscal_year, fm.fiscal_period, fm.net_margin
+FROM financial_metrics fm
+JOIN companies c ON c.id = fm.company_id
+WHERE c.ticker = 'AAPL' AND fm.fiscal_year = 2023 AND fm.fiscal_period = 'FY'
+```
+
+Outcome `execution_error`. Postgres replies:
+
+```
+column fm.net_margin does not exist
+LINE 6:     fm.net_margin
+```
+
+That error text is fed back verbatim. **This is the whole trick**: the database is a
+better critic of SQL than any amount of prompt engineering, and its error messages are
+already precise, actionable English.
+
+**The model's diagnosis** (recorded as `correction_reasoning`, returned to the caller):
+
+> The failure indicates that despite the context description mentioning a `net_margin`
+> column, it does not actually exist in the table. This suggests `financial_metrics` is
+> actually structured as a long/EAV format (metric name + value), where net margin must be
+> derived by dividing the `net_income` metric value by the `revenue` metric value for the
+> same company/fiscal period, rather than being stored as a precomputed column.
+
+It inferred the real schema shape *from a single error message* and — notably — decided to
+distrust its own context.
+
+**Attempt 2** (5,837 ms) — self-joins the table to compute the ratio:
+
+```sql
+SELECT c.ticker, c.name, ni.fiscal_year, ni.fiscal_period,
+       ni.value / rev.value AS net_margin
+FROM financial_metrics ni
+JOIN financial_metrics rev
+  ON rev.company_id = ni.company_id
+ AND rev.fiscal_year = ni.fiscal_year
+ AND rev.fiscal_period = ni.fiscal_period
+ AND rev.metric = 'revenue'
+JOIN companies c ON c.id = ni.company_id
+WHERE c.ticker = 'AAPL' AND ni.metric = 'net_income'
+  AND ni.fiscal_year = 2023 AND ni.fiscal_period = 'FY'
+```
+
+Outcome `success`. **Final answer:** _"Apple's net margin for fiscal year 2023 was
+approximately 25.3%, meaning net income represented about 25.3 cents of every dollar in
+revenue."_ (Independently checked: $96,995M ÷ $383,285M = 25.31%.)
+
+Total cost of recovery: one extra LLM call and about three seconds. The alternative —
+returning `column fm.net_margin does not exist` to the user — would have been a bug report
+instead of an answer.
+
+## Appendix B: when the retry loop went wrong
+
+The retry loop can also fail in an *interesting* way, and the eval harness is what caught
+it. This is the strongest argument in this repo for why the eval is a first-class
+deliverable rather than a checkbox.
+
+The golden set includes a deliberately unanswerable question: _"What was the average
+rainfall in Mordor during the Third Age?"_ Correct behavior is a graceful refusal. What
+the logs actually showed:
+
+1. **Attempt 1** — the model declined to write SQL and explained why. The pipeline had no
+   category for "refusal", so it recorded a generic `execution_error` and retried.
+2. **Attempt 2** — `SELECT NULL::text AS answer WHERE FALSE`. Zero rows, so the pipeline
+   fed back its empty-result hint, which at the time read: _"query returned no rows; **the
+   question likely has an answer** — check metric names, fiscal_period values, joins."_
+3. **Attempt 3** — cornered by a false premise, the model produced valid SQL that returned
+   exactly one row:
+
+   ```sql
+   SELECT 'This database contains only SEC EDGAR financial metrics ...
+           it has no data on fictional locations like Mordor.' AS answer
+   ```
+
+   One row returned, so the pipeline recorded **`success=True`**.
+
+The user-visible answer was honest — no hallucinated rainfall figures — which is exactly
+why this is dangerous: the output looked fine while the machinery was quietly broken. The
+system reported success for an unanswerable question, and the "SQL" was prose in a string
+literal rather than a query. Generalize that pattern to a question that merely *looks*
+answerable and you have a system that fabricates rows to satisfy its own retry loop.
+
+Two root causes, both fixed:
+
+- **No way to say "no."** The model's only exits were "produce SQL" or "fail", so refusal
+  was misclassified as a retryable error. There is now an explicit protocol: the model
+  replies `CANNOT_ANSWER: <reason>`, which raises `UnanswerableQuestionError` and
+  terminates the loop immediately with `success=False` and the model's own reason. As a
+  bonus this *saves* two LLM calls per unanswerable question.
+- **Feedback that asserted a falsehood.** "The question likely has an answer" was a
+  reasonable heuristic — empty results usually *are* filter typos — but stated as fact it
+  pressured the model into manufacturing one. The hint now describes the likely causes
+  without promising an answer exists, and explicitly names `CANNOT_ANSWER` as a legitimate
+  way out.
+
+Behavior after the fix, from the logs:
+
+```
+attempt_number=1  outcome=unanswerable
+reason='The database contains SEC EDGAR financial metrics ... not weather or rainfall
+        data, and has no concept of fictional locations or historical ages.'
+success=False   attempts=1   rows=[]
+```
+
+One attempt, honest failure, two fewer API calls. The regression is pinned by
+`tests/test_pipeline.py::test_unanswerable_question_short_circuits_without_retrying`.
+
+**The lesson worth taking to an interview:** the bug was not in the SQL, the schema, or
+the model. It was in the *shape of the feedback* the agent received. An agentic loop
+optimizes for whatever signal you give it, so a loop that only rewards "produce a row"
+will eventually produce a row by any means available. Give it a way to be right about
+being unable to answer.
+
+## Appendix C: proof that retrieval is load-bearing
+
+An easy claim to make and an easy one to test. Replacing `retrieve_context` with a stub
+that returns no documents, while leaving everything else untouched:
+
+```
+question: "Which company had the highest revenue in 2023?"
+attempt_number=1  outcome=unanswerable
+reason='No schema/context documents were provided describing the tables and columns
+        ... so I cannot determine table/column names to construct a valid query.'
+```
+
+With retrieval, that same question is answered correctly on the first attempt. Without it,
+the model does not hallucinate plausible table names — it correctly reports that it cannot
+proceed. Retrieval is not a nice-to-have accuracy boost here; it is the only thing that
+tells the system what database it is querying.

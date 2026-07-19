@@ -131,10 +131,36 @@ RUN_EVAL=1 pytest -m eval   # golden-set eval: needs live DB + API keys
 
 The eval harness executes each golden question's `reference_sql` for ground truth, runs
 the full pipeline (retry loop included), and compares result sets with a 1% numeric
-tolerance. CI fails if accuracy drops below `EVAL_MIN_ACCURACY` (default 0.75).
+tolerance.
 
-**Current golden-set accuracy:** _TBD — will be published after the first baseline run
-against the live database._
+**Current golden-set accuracy: 17/17 = 100%**, reproduced on two consecutive runs
+against the live database (2026-07-19).
+
+The CI gate is `EVAL_MIN_ACCURACY=0.85` — deliberately below the measured baseline. The
+gate is on **aggregate** accuracy, not per-item: individual misses print full diagnostics
+but only the summary test fails the build. An LLM-backed pipeline is nondeterministic, so
+failing on any single miss would make the threshold decorative and block deploys on
+sampling noise; 85% catches a real regression while tolerating ~2 unlucky rolls of 17.
+
+### Known failure modes
+
+- **Unanswerable questions used to be scored as successes.** Asked something outside the
+  data ("rainfall in Mordor"), the model would decline to write SQL, get retried with
+  feedback asserting *"the question likely has an answer"*, and satisfy the loop by
+  returning prose inside a string literal — `SELECT '<explanation>' AS answer`. One row,
+  `success=True`. The eval caught it. Fixed by giving the model an explicit
+  `CANNOT_ANSWER:` protocol that terminates the loop honestly (and saves two LLM calls);
+  the retry feedback no longer asserts an answer exists. Regression test:
+  `tests/test_pipeline.py::test_unanswerable_question_short_circuits_without_retrying`.
+- **Fiscal vs. calendar years.** `fiscal_year` is the company's own label — Apple's FY2023
+  ends September 2023, not December. Questions phrased in calendar terms may return the
+  fiscal-year figure. The glossary corpus warns the model, but phrasing can still slip past.
+- **Derived Q4 for flow metrics.** Q4 revenue/net income/EPS are computed as
+  `FY − (Q1+Q2+Q3)`, since 10-Ks report the full year rather than a fourth quarter. Exact
+  for revenue and net income; approximate for EPS, where share-count changes across
+  quarters make the subtraction slightly lossy.
+- **Coverage gaps by design.** 25 companies, FY2020–2024, five metrics. Anything else
+  (R&D spend, cash flow, headcount, non-US filers) correctly returns a refusal, not a guess.
 
 ## Docker
 

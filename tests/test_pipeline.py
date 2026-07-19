@@ -20,6 +20,7 @@ from __future__ import annotations
 import pytest
 
 import app.pipeline as pipeline
+from app.generation import UnanswerableQuestionError
 from app.models import ContextDoc
 from app.sql_guard import SQLGuardError
 
@@ -161,6 +162,36 @@ def test_failure_answer_is_readable_not_a_stack_trace(monkeypatch):
     assert resp.answer  # never empty, per QueryResponse contract
 
 
+def test_unanswerable_question_short_circuits_without_retrying(monkeypatch):
+    """A refusal is a conclusion, not a failure — stop at one attempt.
+
+    Regression test for a defect the eval harness caught: the pipeline used to
+    retry these, and the retry feedback ("the question likely has an answer")
+    pressured the model into fabricating a row with
+    `SELECT '<prose>' AS answer` — which executed fine and was recorded as
+    SUCCESS. An unanswerable question must fail honestly, and must not spend
+    the remaining LLM budget getting there.
+    """
+    calls = 0
+
+    def fake_generate(question, context, prior_attempts):
+        nonlocal calls
+        calls += 1
+        raise UnanswerableQuestionError("this database holds no weather data")
+
+    monkeypatch.setattr(pipeline, "generate_sql", fake_generate)
+
+    resp = pipeline.run_pipeline("Rainfall in Mordor?", "req-unanswerable")
+
+    assert calls == 1  # short-circuited: no second or third generation call
+    assert len(resp.attempts) == 1
+    assert resp.attempts[0].outcome == "unanswerable"
+    assert resp.success is False
+    assert resp.sql is None
+    assert resp.rows == []
+    assert "no weather data" in resp.answer  # surfaces the model's own reason
+
+
 def test_empty_result_is_retried_with_contract_feedback(monkeypatch):
     executions: list[str] = []
 
@@ -176,11 +207,16 @@ def test_empty_result_is_retried_with_contract_feedback(monkeypatch):
     assert len(resp.attempts) == 2
     empty_attempt = resp.attempts[0]
     assert empty_attempt.outcome == "empty_result"
-    # Exact wording from CONTRACTS.md — this string IS the retry prompt hint.
-    assert empty_attempt.error_message == (
-        "query returned no rows; the question likely has an answer — "
-        "check metric names, fiscal_period values, joins"
-    )
+    # This string IS the retry prompt hint, so its content is behavior, not
+    # cosmetics. Asserted by properties rather than exact text: it must name the
+    # usual culprits AND offer the refusal protocol, and it must NOT claim an
+    # answer exists — that false premise previously pushed the model into
+    # fabricating a row (`SELECT '<prose>' AS answer`) to satisfy the loop.
+    feedback = empty_attempt.error_message or ""
+    assert "returned no rows" in feedback
+    assert "metric names" in feedback and "fiscal_period" in feedback
+    assert "CANNOT_ANSWER" in feedback
+    assert "likely has an answer" not in feedback
 
 
 def test_guard_rejection_recorded_and_fed_back(monkeypatch):

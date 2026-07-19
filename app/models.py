@@ -44,7 +44,12 @@ class SQLAttempt(BaseModel):
 
     attempt_number: int  # 1-based
     sql: str
-    outcome: Literal["success", "guard_rejected", "execution_error", "empty_result"]
+    # "unanswerable" is terminal, not a retry signal: the model reported the
+    # schema cannot answer the question, so the pipeline stops immediately
+    # rather than spending further attempts (see app/pipeline.py).
+    outcome: Literal[
+        "success", "guard_rejected", "execution_error", "empty_result", "unanswerable"
+    ]
     error_message: str | None = None
     # The model's diagnosis of the previous failure that produced THIS attempt.
     # Always None on attempt 1 (there was nothing to correct yet).

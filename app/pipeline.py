@@ -43,7 +43,7 @@ from __future__ import annotations
 import time
 
 from app.db import execute_readonly
-from app.generation import generate_sql, synthesize_answer
+from app.generation import UnanswerableQuestionError, generate_sql, synthesize_answer
 from app.logging_config import get_logger
 from app.models import ContextDoc, QueryResponse, SQLAttempt
 from app.retrieval import retrieve_context
@@ -66,9 +66,17 @@ MAX_ATTEMPTS = 3
 # question, but far more often the SQL filtered on a value that doesn't
 # exist (metric='netincome' instead of 'net_income', period='2023-Q4'
 # instead of 'Q4'). We nudge the model toward the usual culprits.
+# NOTE the careful wording: an earlier version asserted "the question likely
+# has an answer", and the eval caught the consequence — for a genuinely
+# unanswerable question that false premise pushed the model into fabricating a
+# row (`SELECT '<prose>' AS answer`) to satisfy the loop. Feedback now points at
+# the likely mistakes WITHOUT promising an answer exists, and names the refusal
+# protocol as a legitimate way out.
 _EMPTY_RESULT_FEEDBACK = (
-    "query returned no rows; the question likely has an answer — "
-    "check metric names, fiscal_period values, joins"
+    "query returned no rows; this usually means a filter didn't match stored "
+    "values — check metric names, fiscal_period values, and joins. If the data "
+    "genuinely isn't in this schema, reply CANNOT_ANSWER: <reason> instead. "
+    "Never return explanatory prose inside a SELECT literal."
 )
 
 
@@ -139,6 +147,38 @@ def run_pipeline(question: str, request_id: str) -> QueryResponse:
         # the previous failure (None on attempt 1, by contract).
         try:
             sql, correction_reasoning = generate_sql(question, context, attempts)
+        except UnanswerableQuestionError as exc:
+            # The model concluded the schema cannot answer this question. That
+            # is a CONCLUSION, not a failure to retry: burning two more LLM
+            # calls won't conjure data that doesn't exist, and (as the eval
+            # demonstrated) pressuring the model further tempts it to fake a
+            # row. Stop here and report honestly.
+            attempt = SQLAttempt(
+                attempt_number=attempt_number,
+                sql="",
+                outcome="unanswerable",
+                error_message=exc.reason,
+                correction_reasoning=None,
+                duration_ms=int((time.monotonic() - started) * 1000),
+            )
+            attempts.append(attempt)
+            _log_attempt(request_id, attempt)
+            logger.info("question_unanswerable", request_id=request_id, reason=exc.reason)
+            return QueryResponse(
+                request_id=request_id,
+                question=question,
+                success=False,
+                sql=None,
+                rows=[],
+                answer=(
+                    f"I can't answer that from this database. {exc.reason} "
+                    "This dataset covers revenue, net income, total assets, total "
+                    "liabilities, and diluted EPS for 25 large US public companies, "
+                    "fiscal years 2020–2024."
+                ),
+                attempts=attempts,
+                context_docs=context,
+            )
         except Exception as exc:  # noqa: BLE001 — API errors, parse failures
             # Generation itself failed (Anthropic API error, or no SQL in
             # the response). Record it as an execution_error attempt — the
