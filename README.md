@@ -3,7 +3,8 @@
 Ask a financial question in plain English; get back the SQL that answers it, the rows it
 returned, and a grounded natural-language answer — over real SEC EDGAR financial data.
 
-**Live demo:** _coming soon_ <!-- TODO: replace with Railway production URL -->
+**Live demo:** https://edgar-nl2sql-production-production.up.railway.app/ — ask a question
+and watch the retrieval → generation → self-correction pipeline run live.
 
 ```
 "What was Apple's net margin in fiscal 2023?"
@@ -176,6 +177,18 @@ The image is multi-stage (`python:3.12-slim` runtime, dependencies baked in a bu
 stage) and runs as a non-root user.
 
 ## Deployment (Railway)
+
+Two services in one Railway project, deployed from the Dockerfile:
+
+| Environment | Service | URL |
+|---|---|---|
+| Staging | `edgar-nl2sql-staging` | https://edgar-nl2sql-staging-production.up.railway.app |
+| Production | `edgar-nl2sql-production` | https://edgar-nl2sql-production-production.up.railway.app |
+
+Each service sets `DATABASE_URL`, `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`,
+`RATE_LIMIT_PER_MINUTE`, and `PORT=8000` (the app honors `$PORT`; pinning it makes the
+generated public domain's target port deterministic). The app is stateless — all state
+lives in Supabase Postgres — so containers can be replaced freely.
 
 CI (`.github/workflows/ci.yml`) is a trust ladder:
 
