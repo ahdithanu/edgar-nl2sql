@@ -124,3 +124,25 @@ jobs:
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: railway up --service edgar-nl2sql-staging --detach
+
+      # WHY this step exists: `railway up --detach` returns as soon as the
+      # upload is accepted, so the job goes green even when the build or the
+      # container start subsequently FAILS. That was not hypothetical — a
+      # transient Railway failure was reported here as a successful deploy
+      # while staging quietly kept serving the previous build. A deploy step
+      # that cannot fail is not a gate, so verify the deployment actually
+      # became live before calling this job successful.
+      - name: Verify staging is live and healthy
+        run: |
+          URL="https://edgar-nl2sql-staging-production.up.railway.app/health"
+          for i in $(seq 1 40); do
+            body=$(curl -fsS --max-time 10 "$URL" 2>/dev/null || true)
+            if echo "$body" | grep -q '"database":true'; then
+              echo "staging healthy: $body"
+              exit 0
+            fi
+            echo "attempt $i — not ready yet (${body:-no response})"
+            sleep 15
+          done
+          echo "::error::Staging did not become healthy within 10 minutes."
+          exit 1

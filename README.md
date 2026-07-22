@@ -244,7 +244,11 @@ CI (`.github/workflows/ci.yml`) is a trust ladder:
    secrets are configured; gates on golden-set accuracy.
 3. **deploy-staging** — on push to `main`, only after unit + eval are green, deploys to
    the Railway **staging** service via `railway up` (requires the `RAILWAY_TOKEN`
-   secret; skipped gracefully when absent).
+   secret; skipped gracefully when absent), then **polls `/health` until staging is
+   actually serving**. `railway up --detach` returns once the upload is accepted, so
+   without that verification the job would go green even when the build or container
+   start failed — which is exactly what happened once during setup. A deploy step that
+   cannot fail is not a gate.
 
 ### Staging → production promotion
 
