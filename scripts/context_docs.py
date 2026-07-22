@@ -267,6 +267,47 @@ CONTEXT_DOCS: list[dict] = [
         """,
     ),
     _doc(
+        "glossary",
+        "sector and industry questions — banks, tech, energy, healthcare",
+        """
+        Questions about a GROUP of companies rather than named ones: "all
+        banks", "the banks", "tech companies", "energy companies", "pharma",
+        "healthcare", "retailers", "which industry", "compare sectors",
+        "average revenue growth across banks", "how profitable is the tech
+        sector", "biggest bank by assets".
+
+        These ARE answerable. companies.sic_description holds an SEC industry
+        label for every company in the database — there is no separate sector
+        table, but the column is populated for all 25 companies, so never
+        answer that industry information is unavailable.
+
+        WHY THIS DOC EXISTS: questions like "average revenue growth across all
+        banks" mix a sector filter with a metric concept, and retrieval tends
+        to return only growth/metric docs — leaving the model believing no
+        industry data exists. It does. Match broadly with ILIKE:
+
+            -- every bank's revenue growth 2022 -> 2023
+            SELECT c.ticker, c.name,
+                   ROUND(100.0 * (r23.value - r22.value) / r22.value, 1) AS growth_pct
+            FROM companies c
+            JOIN financial_metrics r22 ON r22.company_id = c.id
+             AND r22.metric = 'revenue' AND r22.fiscal_year = 2022 AND r22.fiscal_period = 'FY'
+            JOIN financial_metrics r23 ON r23.company_id = c.id
+             AND r23.metric = 'revenue' AND r23.fiscal_year = 2023 AND r23.fiscal_period = 'FY'
+            WHERE c.sic_description ILIKE '%bank%'
+            ORDER BY growth_pct DESC;
+
+        Useful ILIKE patterns: '%bank%' (JPM, BAC), '%software%' or
+        '%computer%' (MSFT, AAPL), '%petroleum%' (XOM, CVX),
+        '%pharmaceutical%' (JNJ, PFE), '%retail%' or '%stores%' (WMT, COST, HD).
+        For finance broadly, include brokers: sic_description ILIKE '%bank%'
+        OR sic_description ILIKE '%security brokers%' (GS).
+
+        If a sector label genuinely matches no company, say so — but check with
+        ILIKE first rather than assuming the classification does not exist.
+        """,
+    ),
+    _doc(
         "column",
         "financial_metrics.filing_id — linking metrics to their source filing",
         """

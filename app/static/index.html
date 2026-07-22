@@ -403,6 +403,17 @@ const wait = (ms) => new Promise((res) => { const t = setTimeout(res, REDUCED ? 
 
 $("#ask-form").addEventListener("submit", (e) => { e.preventDefault(); ask(); });
 
+// Shareable deep links: /?q=What+was+Apple's+revenue+in+2023 prefills the box
+// and runs immediately. Handy for sending someone a specific result, and it
+// makes the README screenshots reproducible from a headless browser.
+(() => {
+  const q = new URLSearchParams(location.search).get("q");
+  if (q && q.trim().length >= 3) {
+    $("#question").value = q.trim();
+    ask();
+  }
+})();
+
 async function ask() {
   const question = $("#question").value.trim();
   if (question.length < 3) return;
