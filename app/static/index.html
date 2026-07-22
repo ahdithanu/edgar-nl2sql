@@ -487,6 +487,20 @@ async function replay(r) {
       await wait(350);
     }
 
+    // The model refused: it reported the schema cannot answer this question.
+    // No SQL was generated, so nothing was validated or executed — say exactly
+    // that instead of falling through to the generic "generated SQL" path,
+    // which would claim steps that never happened.
+    if (a.outcome === "unanswerable") {
+      setStage(1, "done");
+      logLine("attempt", `attempt ${a.attempt_number} — model declined to write SQL`);
+      await wait(350);
+      logLine("info", `reason: ${a.error_message || "not answerable from this schema"}`);
+      // Downstream stages never ran; leave them idle rather than mid-flight.
+      setStage(2, "idle"); setStage(3, "idle"); setStage(4, "idle");
+      break;
+    }
+
     // show this attempt's SQL as soon as it is "generated"
     currentSql = a.sql || "";
     if (currentSql) { $("#sql-code").innerHTML = highlightSQL(currentSql); $("#output").hidden = false; }
@@ -522,7 +536,14 @@ async function replay(r) {
     }
   }
 
-  if (!r.success) logLine("error", "all attempts exhausted — returning what was tried");
+  // "Exhausted" only applies when attempts were actually spent failing — a
+  // refusal is a deliberate stop, not a budget running out.
+  const refused = attempts.some((a) => a.outcome === "unanswerable");
+  if (!r.success && !refused) {
+    logLine("error", "all attempts exhausted — returning what was tried");
+  } else if (refused) {
+    logLine("info", "stopped after 1 attempt — no retries spent on an unanswerable question");
+  }
   renderOutput(r);
   renderContext(r.context_docs || []);
 }
@@ -536,7 +557,13 @@ function renderOutput(r) {
   // Final SQL wins; on total failure keep the last attempt's SQL visible.
   const finalSql = r.sql || (r.attempts?.length ? r.attempts[r.attempts.length - 1].sql : "");
   currentSql = finalSql || "";
-  $("#sql-code").innerHTML = finalSql ? highlightSQL(finalSql) : '<span class="cmt">-- no SQL survived validation</span>';
+  // Distinguish "we tried and everything failed" from "we deliberately didn't
+  // try" — claiming a validation step that never ran would be a lie.
+  const refusedSql = (r.attempts || []).some((a) => a.outcome === "unanswerable");
+  const emptyMsg = refusedSql
+    ? "-- no SQL generated: the question isn't answerable from this schema"
+    : "-- no SQL survived validation";
+  $("#sql-code").innerHTML = finalSql ? highlightSQL(finalSql) : `<span class="cmt">${emptyMsg}</span>`;
 
   const rows = r.rows || [];
   const tableEl = $("#rows-table");

@@ -15,10 +15,27 @@ POST /query  →  { sql: "SELECT ...", rows: [...], answer: "Apple's net margin 
                   attempts: [...], context_docs: [...] }
 ```
 
+![The demo answering a question end to end](docs/demo-query.png)
+
 It is a small, complete **NL → SQL RAG system** with the operational parts that usually
 get skipped in demos: a read-only SQL guard, a self-correcting retry loop, structured
 JSON logging with request IDs, an executable golden-set eval that **gates CI**, and a
 staged deploy pipeline. The design write-up lives in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+### Why I built it this way
+
+This is a deliberate stand-in for the job: a customer has a database nobody outside the
+data team can query, and business users asking questions in English. The interesting work
+isn't the model call — it's everything around it. Can a non-engineer trust the answer? Can
+you prove it didn't get worse after a prompt change? What happens when the LLM writes
+invalid SQL at 2am, or when someone asks a question the data simply can't answer?
+
+So the parts I spent time on are the parts that make it survivable in front of a customer:
+the system **shows its work** (every response returns the SQL, the retry attempts, and the
+context that was retrieved), it **can't be talked into a destructive query**, it **admits
+when it doesn't know** instead of inventing a number, and a change that degrades answer
+quality **cannot reach production** because the eval gate fails the build. Scope is a
+feature too — see [what I deliberately did NOT build](ARCHITECTURE.md#what-we-deliberately-did-not-build).
 
 ## How it works
 
@@ -121,6 +138,36 @@ curl -s localhost:8000/query \
 Every response includes the `attempts` array (each generated SQL, its outcome, and the
 model's correction reasoning on retries) and `context_docs` (what retrieval injected) —
 the pipeline shows its work.
+
+Ask something the data can't answer and it says so, rather than inventing a number —
+and it spends **one** attempt doing it, not three:
+
+![Graceful refusal on an out-of-scope question](docs/demo-refusal.png)
+
+A worked example of the retry loop recovering from a genuinely broken query — real log
+output, attempt 1 failing on a nonexistent column and attempt 2 self-correcting to a
+join — is in [ARCHITECTURE.md, Appendix A](ARCHITECTURE.md#appendix-a-a-worked-self-correction-example).
+
+## Performance and cost
+
+Measured against the live production deployment, not estimated:
+
+| | |
+|---|---|
+| End-to-end query latency | **4.9–6.4s** (median 5.2s, n=6) |
+| `GET /health` | 0.4s |
+| Tokens per query | ~3,800 in / ~280 out (1 attempt, incl. answer synthesis) |
+| **LLM cost per query** | **~$0.016** typical · ~$0.045 worst case (3 attempts) |
+| Embedding cost per query | ~$0.0000002 (negligible) |
+| Fixed monthly | $5 Railway + $10 Supabase Pro |
+
+Most of the latency is the two sequential Claude calls (generate SQL, then synthesize the
+answer); Postgres itself answers in single-digit milliseconds. The retrieval step adds one
+Voyage embedding call, which is fast and effectively free.
+
+The 3-attempt cap is what bounds the worst case: without it, a pathological question could
+retry indefinitely and the per-query cost would be unbounded. That is the entire reason
+the number is hardcoded rather than configurable.
 
 ## Tests & eval
 
