@@ -183,13 +183,13 @@
     <h1>Ask financial questions in English. Get <em>the SQL</em> and the answer.</h1>
     <p class="lede">It retrieves the relevant schema and business terms first, writes the query, checks its own work against a read-only guard, and retries when it's wrong — capped, logged, and measured on every request.</p>
     <div class="stat-chips">
-      <span>25 public companies</span>
-      <span>5yr of filings</span>
+      <span>478 public companies</span>
+      <span>FY2020–2026</span>
       <span>pgvector retrieval</span>
       <span>3-attempt retry cap</span>
       <span><span class="hl">eval-gated</span> CI</span>
     </div>
-    <p class="scope-note">The 25 companies span 18 SIC industries, picked so questions hit different filing structures rather than to sample the market by size. The window is five fiscal years, 2020 through 2024.</p>
+    <p class="scope-note">The 478 companies are the largest US-listed filers by market cap, taken from the ordering SEC publishes in company_tickers.json, so the selection is a rule, not a hand-picked list. They span 153 SIC industries. Fiscal years run 2020 through 2026; the newest year is partial, since most companies have not filed it yet.</p>
   </section>
 
   <!-- CONSOLE (live — wired to the real API) -->
@@ -289,7 +289,7 @@
       <div class="scope-item"><span class="x" style="color:var(--red)">wrong</span><div><b>Calendar years answered with fiscal periods.</b> <span class="d">Ask for "the calendar year ending December 2022" and it sums fiscal quarters that do not line up with calendar boundaries, then reports the total as calendar-year revenue. Confidently wrong.</span></div></div>
       <div class="scope-item"><span class="x" style="color:var(--gold)">approx</span><div><b>Derived Q4 presented as reported.</b> <span class="d">Q4 for revenue, net income, and EPS is computed as the full year minus Q1 through Q3. That is exact for dollar flows, but for EPS it is an approximation because share counts move across quarters. The answer does not say it was derived.</span></div></div>
       <div class="scope-item"><span class="x" style="color:var(--gold)">assumes</span><div><b>Missing time period, filled in silently.</b> <span class="d">Ask "What was Microsoft's revenue?" with no year and it returns all five years as a trend rather than asking which one. It resolves the ambiguity by guessing, not by surfacing it.</span></div></div>
-      <div class="scope-item"><span class="x" style="color:var(--green)">holds</span><div><b>Out of scope, refused not faked.</b> <span class="d">Questions outside the five stored metrics or the five-year window (operating income, R&D, gross margin, fiscal 2019) return a refusal that names what is missing, not a fabricated number. Verified against all four.</span></div></div>
+      <div class="scope-item"><span class="x" style="color:var(--green)">holds</span><div><b>Out of scope, refused not faked.</b> <span class="d">Questions outside the five stored metrics or the loaded year range (operating income, R&D, gross margin, fiscal 2019) return a refusal that names what is missing, not a fabricated number. Verified against all four.</span></div></div>
     </div>
   </section>
 
@@ -299,7 +299,7 @@
     <p class="band-sub">Scope is a design tool. What's left out is a decision, not an oversight.</p>
     <div class="scope-list">
       <div class="scope-item"><span class="x">✕</span><div><b>Multi-cloud / AWS build-out.</b> <span class="d">One managed Postgres and one container host. Portability isn't a requirement this project has.</span></div></div>
-      <div class="scope-item"><span class="x">✕</span><div><b>Separate vector service.</b> <span class="d">pgvector lives in the same Postgres. No second datastore to operate for 25 companies of filings.</span></div></div>
+      <div class="scope-item"><span class="x">✕</span><div><b>Separate vector service.</b> <span class="d">pgvector lives in the same Postgres. No second datastore to operate for a corpus this size.</span></div></div>
       <div class="scope-item"><span class="x">✕</span><div><b>Premature scaling infra.</b> <span class="d">No queues, no sharding, no autoscaling groups. The load doesn't exist yet, so neither does the machinery for it.</span></div></div>
       <div class="scope-item"><span class="x">✕</span><div><b>Multi-origin routing.</b> <span class="d">Single origin, single region. Edge distribution buys nothing for an internal-style tool with a handful of users.</span></div></div>
     </div>
