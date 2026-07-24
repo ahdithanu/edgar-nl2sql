@@ -241,28 +241,35 @@ CI (`.github/workflows/ci.yml`) is a trust ladder:
 
 1. **unit** — every push/PR, no secrets required.
 2. **eval** — runs when `DATABASE_URL`, `ANTHROPIC_API_KEY`, and `VOYAGE_API_KEY`
-   secrets are configured; gates on golden-set accuracy.
+   secrets are configured; gates on the held-out split's accuracy.
 3. **deploy-staging** — on push to `main`, only after unit + eval are green, deploys to
    the Railway **staging** service via `railway up` (requires the `RAILWAY_TOKEN`
    secret; skipped gracefully when absent), then **polls `/health` until staging is
    actually serving**. `railway up --detach` returns once the upload is accepted, so
    without that verification the job would go green even when the build or container
-   start failed — which is exactly what happened once during setup. A deploy step that
+   start failed, which is exactly what happened once during setup. A deploy step that
    cannot fail is not a gate.
+4. **deploy-production** — runs only on a manual `workflow_dispatch`, and only after unit
+   and eval **passed** (not merely skipped). Same `railway up` plus health-verify as
+   staging, pointed at the production service.
 
 ### Staging → production promotion
 
-Production deploys are deliberately manual — a human looks at staging first:
+Production is promoted through the same eval gate as staging, not around it. The
+promotion is a manual trigger of the CI workflow, which re-runs unit and eval before it
+will deploy:
 
-1. CI deploys `main` to the `edgar-nl2sql-staging` service automatically.
+1. CI deploys `main` to the `edgar-nl2sql-staging` service automatically on every push.
 2. Smoke-check staging: `GET /health` returns `ok`, and a couple of the example
-   queries above return sensible SQL + answers.
-3. Promote the same commit to production:
+   queries above return sensible SQL and answers.
+3. Promote to production by running the workflow manually (this runs unit + eval first,
+   and the `deploy-production` job only fires if the eval passed):
    ```bash
-   railway up --service edgar-nl2sql-production --detach
+   gh workflow run ci.yml
    ```
-   (run locally with `RAILWAY_TOKEN` set, or redeploy the staging image from the
-   Railway dashboard onto the production service).
+   or use the "Run workflow" button on the Actions tab. Break-glass only, when CI itself
+   is unavailable: `railway up --service edgar-nl2sql-production --detach` from a checkout
+   of the commit, which bypasses the gate and should be avoided.
 
 ### Rollback
 

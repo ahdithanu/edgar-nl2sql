@@ -18,6 +18,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Production is promoted by manually running this workflow (Actions tab or
+  # `gh workflow run ci.yml`). The dispatch runs unit + eval first, so a
+  # promotion cannot skip the gate — see the deploy-production job below.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -145,4 +149,47 @@ jobs:
             sleep 15
           done
           echo "::error::Staging did not become healthy within 10 minutes."
+          exit 1
+
+  deploy-production:
+    name: Deploy to Railway production
+    runs-on: ubuntu-latest
+    needs: [preflight, unit, eval]
+    # Production runs ONLY on a manual dispatch, and ONLY after unit and eval
+    # PASSED (not skipped). Staging tolerates a skipped eval so a secret-less
+    # fork still deploys; production does not — promoting past the eval gate is
+    # the one thing this job exists to make impossible. This is the same gate
+    # staging runs behind, applied to prod.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      !cancelled() &&
+      needs.unit.result == 'success' &&
+      needs.eval.result == 'success' &&
+      needs.preflight.outputs.has-railway-token == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to production
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service edgar-nl2sql-production --detach
+
+      # Same reason as staging: --detach cannot fail, so verify the container
+      # actually came up before this job is allowed to go green.
+      - name: Verify production is live and healthy
+        run: |
+          URL="https://edgar-nl2sql-production-production.up.railway.app/health"
+          for i in $(seq 1 40); do
+            body=$(curl -fsS --max-time 10 "$URL" 2>/dev/null || true)
+            if echo "$body" | grep -q '"database":true'; then
+              echo "production healthy: $body"
+              exit 0
+            fi
+            echo "attempt $i — not ready yet (${body:-no response})"
+            sleep 15
+          done
+          echo "::error::Production did not become healthy within 10 minutes."
           exit 1
