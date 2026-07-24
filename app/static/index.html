@@ -267,10 +267,10 @@
     <h2>Engineering discipline</h2>
     <p class="band-sub">The model is the easy part. These are the guardrails that make it shippable.</p>
     <div class="cards">
-      <div class="card"><div class="k">eval harness</div><div class="t">17 golden questions</div><div class="d">A fixed set of question→expected-result pairs run on every change. Accuracy is a number, not a vibe.</div></div>
-      <div class="card"><div class="k">ci gate</div><div class="t">Fails the build below the floor</div><div class="d">The eval runs in CI and blocks merge if accuracy drops under the threshold. Regressions can't ship.</div></div>
-      <div class="card"><div class="k">observability</div><div class="t">JSON logs, every attempt traced</div><div class="d">Retrieval hits, generated SQL, validation, and each retry are logged structured with a request id — a failure is reproducible.</div></div>
-      <div class="card"><div class="k">deploy</div><div class="t">staging → prod</div><div class="d">Changes land in staging behind the same eval gate before promotion. Prod is boring on purpose.</div></div>
+      <div class="card"><div class="k">eval harness</div><div class="t">dev 100%, held-out 92.9%</div><div class="d">17 questions written alongside the prompt (dev, 17/17) and 14 written afterward and never used to tune it (held-out, 13/14). Answers are execution-matched against reference SQL. Last run 2026-07-23.</div></div>
+      <div class="card"><div class="k">ci gate</div><div class="t">Held-out floor: 85%</div><div class="d">CI runs the eval and gates on the held-out split. Below 85% the build fails and branch protection blocks the merge. Regressions can't ship.</div></div>
+      <div class="card"><div class="k">observability</div><div class="t">Every step logged</div><div class="d">Retrieval hits, the guard verdict, the generated SQL, and every retry are logged as JSON events, each carrying one request id. A failure is reproducible from the logs.</div></div>
+      <div class="card"><div class="k">deploy</div><div class="t">staging → prod</div><div class="d">Both deploys run behind the eval gate. Staging is automatic on a green build; production is a manual promotion of the same gated pipeline.</div></div>
       <div class="card"><div class="k green">safety</div><div class="t">SELECT-only enforcement</div><div class="d">Parsed at the app layer and backed by a READ ONLY transaction. Two independent locks, not one prompt instruction.</div></div>
       <div class="card"><div class="k red">cost</div><div class="t">3-attempt cap</div><div class="d">Retries are bounded so a pathological question can't burn unbounded tokens or wall-clock time.</div></div>
     </div>
