@@ -258,10 +258,16 @@ def run_pipeline(question: str, request_id: str) -> QueryResponse:
             _log_attempt(request_id, attempt)
             continue
 
-        # --- Classify: zero rows is treated as a failure worth retrying,
-        # not a success, because in this domain it almost always means a
-        # filter mismatch rather than a genuinely empty answer.
-        if not rows:
+        # --- Classify: zero rows OR an all-NULL result is treated as a failure
+        # worth retrying, not a success. Zero rows usually means a filter
+        # mismatch. An all-NULL result is the trap the expanded dataset exposed:
+        # asking for an unstored metric ("gross margin") makes the model write
+        # SUM(value) FILTER (WHERE metric='gross_profit') / NULLIF(...), which
+        # returns exactly one row of NULL because no gross_profit rows exist.
+        # That is one row, so `if not rows` misses it, and it was being scored
+        # as success with a fabricated {value: None}. A result with no non-null
+        # cell anywhere carries no answer, so treat it like empty.
+        if _is_empty_result(rows):
             attempt = SQLAttempt(
                 attempt_number=attempt_number,
                 sql=sql,
@@ -334,6 +340,20 @@ def run_pipeline(question: str, request_id: str) -> QueryResponse:
         answer=_failure_narrative(question, attempts),
         attempts=attempts,
         context_docs=context,
+    )
+
+
+def _is_empty_result(rows: list[dict]) -> bool:
+    """True if the result carries no answer: no rows, or every cell is NULL.
+
+    The all-NULL case matters because SQL aggregates over an empty filter
+    (SUM(...) FILTER (WHERE metric='gross_profit') when no such metric exists)
+    return one row of NULLs rather than zero rows. Requiring at least one
+    non-null cell somewhere keeps that from being scored as a real answer,
+    while not rejecting rows that merely have some NULL columns.
+    """
+    return not rows or all(
+        all(value is None for value in row.values()) for row in rows
     )
 
 
