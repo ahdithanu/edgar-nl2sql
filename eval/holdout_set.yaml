@@ -1,0 +1,188 @@
+# Held-out eval set (eval/test_eval.py).
+#
+# These questions were written AFTER the system prompt and the retrieval corpus
+# were fixed, and were never consulted while tuning either. The dev set
+# (golden_set.yaml) was authored alongside the prompt/corpus, so its accuracy
+# reflects fitting as much as capability. This set exists to measure
+# generalization: same capability categories, different companies, years, and
+# phrasings, plus deliberate probes of the documented failure modes.
+#
+# Same schema as golden_set.yaml (question / reference_sql / check /
+# expect_failure). Ground truth is executed from reference_sql, never hardcoded.
+
+# --- simple lookups (different companies/years than dev) --------------------
+
+- id: h_revenue_google_2022
+  question: "What was Alphabet's revenue in fiscal 2022?"
+  reference_sql: >
+    SELECT fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker = 'GOOGL' AND fm.metric = 'revenue'
+      AND fm.fiscal_year = 2022 AND fm.fiscal_period = 'FY'
+  check: relative
+
+# "profit" is not a column; the model must map it to net_income. Probes the
+# ambiguous-metric failure mode.
+- id: h_profit_amazon_2021
+  question: "How much profit did Amazon make in fiscal 2021?"
+  reference_sql: >
+    SELECT fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker = 'AMZN' AND fm.metric = 'net_income'
+      AND fm.fiscal_year = 2021 AND fm.fiscal_period = 'FY'
+  check: relative
+
+# --- quarterly --------------------------------------------------------------
+
+- id: h_revenue_netflix_q1_2024
+  question: "What was Netflix's revenue in the first quarter of fiscal 2024?"
+  reference_sql: >
+    SELECT fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker = 'NFLX' AND fm.metric = 'revenue'
+      AND fm.fiscal_year = 2024 AND fm.fiscal_period = 'Q1'
+  check: relative
+
+- id: h_eps_costco_q3_2023
+  question: "What was Costco's diluted EPS in Q3 of fiscal 2023?"
+  reference_sql: >
+    SELECT fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker = 'COST' AND fm.metric = 'eps_diluted'
+      AND fm.fiscal_year = 2023 AND fm.fiscal_period = 'Q3'
+  check: relative
+
+# --- superlatives -----------------------------------------------------------
+
+- id: h_lowest_net_income_2020
+  question: "Which company had the lowest net income in fiscal 2020?"
+  reference_sql: >
+    SELECT c.ticker
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE fm.metric = 'net_income' AND fm.fiscal_year = 2020
+      AND fm.fiscal_period = 'FY'
+    ORDER BY fm.value ASC
+    LIMIT 1
+  check: exact
+
+- id: h_top3_total_assets_2024
+  question: "What were the three largest companies by total assets in fiscal 2024?"
+  reference_sql: >
+    SELECT c.ticker
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE fm.metric = 'total_assets' AND fm.fiscal_year = 2024
+      AND fm.fiscal_period = 'FY'
+    ORDER BY fm.value DESC
+    LIMIT 3
+  check: exact
+
+# --- ratios -----------------------------------------------------------------
+
+- id: h_net_margin_google_2022
+  question: "What was Alphabet's net margin in fiscal 2022?"
+  reference_sql: >
+    SELECT ni.value / rev.value * 100 AS net_margin_pct
+    FROM financial_metrics ni
+    JOIN financial_metrics rev
+      ON rev.company_id = ni.company_id
+     AND rev.metric = 'revenue'
+     AND rev.fiscal_year = ni.fiscal_year
+     AND rev.fiscal_period = ni.fiscal_period
+    JOIN companies c ON c.id = ni.company_id
+    WHERE c.ticker = 'GOOGL' AND ni.metric = 'net_income'
+      AND ni.fiscal_year = 2022 AND ni.fiscal_period = 'FY'
+  check: relative
+
+- id: h_debt_ratio_disney_2023
+  question: "What was Disney's ratio of total liabilities to total assets at the end of fiscal 2023?"
+  reference_sql: >
+    SELECT liab.value / assets.value AS debt_ratio
+    FROM financial_metrics liab
+    JOIN financial_metrics assets
+      ON assets.company_id = liab.company_id
+     AND assets.metric = 'total_assets'
+     AND assets.fiscal_year = liab.fiscal_year
+     AND assets.fiscal_period = liab.fiscal_period
+    JOIN companies c ON c.id = liab.company_id
+    WHERE c.ticker = 'DIS' AND liab.metric = 'total_liabilities'
+      AND liab.fiscal_year = 2023 AND liab.fiscal_period = 'FY'
+  check: relative
+
+# --- year-over-year growth --------------------------------------------------
+
+- id: h_revenue_growth_meta_2021_2022
+  question: "By what percent did Meta's revenue grow from fiscal 2021 to fiscal 2022?"
+  reference_sql: >
+    SELECT (cur.value - prev.value) / prev.value * 100 AS growth_pct
+    FROM financial_metrics cur
+    JOIN financial_metrics prev
+      ON prev.company_id = cur.company_id
+     AND prev.metric = cur.metric
+     AND prev.fiscal_period = cur.fiscal_period
+     AND prev.fiscal_year = 2021
+    JOIN companies c ON c.id = cur.company_id
+    WHERE c.ticker = 'META' AND cur.metric = 'revenue'
+      AND cur.fiscal_year = 2022 AND cur.fiscal_period = 'FY'
+  check: relative
+
+# --- multi-hop temporal (fetch two years, take the difference) --------------
+
+- id: h_netincome_change_msft_2020_2023
+  question: "By how many dollars did Microsoft's net income change between fiscal 2020 and fiscal 2023?"
+  reference_sql: >
+    SELECT later.value - earlier.value AS change
+    FROM financial_metrics later
+    JOIN financial_metrics earlier
+      ON earlier.company_id = later.company_id
+     AND earlier.metric = later.metric
+     AND earlier.fiscal_period = later.fiscal_period
+     AND earlier.fiscal_year = 2020
+    JOIN companies c ON c.id = later.company_id
+    WHERE c.ticker = 'MSFT' AND later.metric = 'net_income'
+      AND later.fiscal_year = 2023 AND later.fiscal_period = 'FY'
+  check: relative
+
+# --- cross-company comparison -----------------------------------------------
+
+- id: h_compare_revenue_coke_pepsi_2023
+  question: "Compare Coca-Cola's and PepsiCo's revenue in fiscal 2023."
+  reference_sql: >
+    SELECT c.ticker, fm.value
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.ticker IN ('KO', 'PEP') AND fm.metric = 'revenue'
+      AND fm.fiscal_year = 2023 AND fm.fiscal_period = 'FY'
+    ORDER BY c.ticker
+  check: relative
+
+# --- sector aggregation (industry filter via sic_description) ----------------
+
+- id: h_energy_revenue_2023
+  question: "What was the combined revenue of all energy companies in fiscal 2023?"
+  reference_sql: >
+    SELECT SUM(fm.value) AS total_revenue
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE c.sic_description ILIKE '%petroleum%' AND fm.metric = 'revenue'
+      AND fm.fiscal_year = 2023 AND fm.fiscal_period = 'FY'
+  check: relative
+
+# --- failure-mode probes ----------------------------------------------------
+
+# Data starts at fiscal 2020. A 2019 question has no answer in the schema; the
+# system must fail rather than substitute a nearby year.
+- id: h_out_of_window_apple_2019
+  question: "What was Apple's revenue in fiscal 2019?"
+  expect_failure: true
+
+# R&D expense is not one of the five stored metrics. The system must not map it
+# to a metric it does have and return a confident wrong number.
+- id: h_out_of_schema_apple_rnd_2023
+  question: "How much did Apple spend on research and development in fiscal 2023?"
+  expect_failure: true

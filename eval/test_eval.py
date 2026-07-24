@@ -59,14 +59,31 @@ pytestmark = [
 ]
 
 GOLDEN_SET_PATH = Path(__file__).parent / "golden_set.yaml"
+HOLDOUT_SET_PATH = Path(__file__).parent / "holdout_set.yaml"
 RELATIVE_TOLERANCE = 0.01  # 1% per numeric cell for check: relative
 
-with GOLDEN_SET_PATH.open() as f:
-    GOLDEN_ITEMS: list[dict] = yaml.safe_load(f)
+
+def _load(path: Path, split: str) -> list[dict]:
+    with path.open() as f:
+        items = yaml.safe_load(f)
+    for item in items:
+        item["_split"] = split
+    return items
+
+
+# Two splits, kept separate on purpose. `dev` questions were authored alongside
+# the prompt and corpus, so their accuracy reflects fitting; `holdout` questions
+# were written afterward and never used to tune anything, so their accuracy is
+# the honest generalization number. The summary reports each split separately;
+# blending them would hide the tuning.
+GOLDEN_ITEMS: list[dict] = _load(GOLDEN_SET_PATH, "dev")
+HOLDOUT_ITEMS: list[dict] = _load(HOLDOUT_SET_PATH, "holdout")
+ALL_ITEMS: list[dict] = GOLDEN_ITEMS + HOLDOUT_ITEMS
 
 # Shared scoreboard: each per-item test records its verdict here, and the
 # summary test (which runs last — pytest preserves file order) reads it.
 RESULTS: dict[str, bool] = {}
+SPLIT_OF: dict[str, str] = {item["id"]: item["_split"] for item in ALL_ITEMS}
 
 # Diagnostics for misses, keyed by item id. These are printed by the SUMMARY
 # test rather than by the per-item test, because pytest captures stdout for
@@ -162,7 +179,7 @@ def rowsets_match(expected: list[dict], actual: list[dict], check: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("item", GOLDEN_ITEMS, ids=[i["id"] for i in GOLDEN_ITEMS])
+@pytest.mark.parametrize("item", ALL_ITEMS, ids=[i["id"] for i in ALL_ITEMS])
 def test_golden_item(item: dict) -> None:
     # Imports deferred so collecting (and skipping) this module never touches
     # settings, the DB, or provider SDKs on machines without credentials.
@@ -229,26 +246,43 @@ def test_golden_item(item: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _split_accuracy(split: str) -> tuple[int, int]:
+    items = [i for i in ALL_ITEMS if i["_split"] == split]
+    passed = sum(1 for i in items if RESULTS.get(i["id"], False))
+    return passed, len(items)
+
+
 def test_zz_accuracy_summary() -> None:
-    """Print the accuracy table and enforce the CI gate.
+    """Print the per-split accuracy table and enforce the CI gate.
 
     Named zz_* so it runs after every per-item test in this file. Items
     whose test errored before recording a verdict count as failures — an
     eval that crashes is not an eval that passed.
+
+    The gate is on the HELD-OUT split, because that is the honest measure of
+    whether the system generalizes past the questions it was tuned on. Dev
+    accuracy is reported for context but not gated (gating on the tuned set
+    would reward overfitting). EVAL_MIN_ACCURACY sets the held-out floor.
     """
     min_accuracy = float(os.environ.get("EVAL_MIN_ACCURACY", "0.85"))
 
-    total = len(GOLDEN_ITEMS)
-    passed = sum(1 for item in GOLDEN_ITEMS if RESULTS.get(item["id"], False))
-    accuracy = passed / total if total else 0.0
-
-    width = max(len(item["id"]) for item in GOLDEN_ITEMS) + 2
+    width = max(len(i["id"]) for i in ALL_ITEMS) + 2
     print("\n\n=== EVAL ACCURACY SUMMARY " + "=" * 40)
-    for item in GOLDEN_ITEMS:
-        verdict = "PASS" if RESULTS.get(item["id"], False) else "FAIL"
-        print(f"  {item['id']:<{width}} {verdict}")
+    for split in ("dev", "holdout"):
+        print(f"\n  [{split}]")
+        for item in ALL_ITEMS:
+            if item["_split"] != split:
+                continue
+            verdict = "PASS" if RESULTS.get(item["id"], False) else "FAIL"
+            print(f"    {item['id']:<{width}} {verdict}")
+
+    dev_p, dev_n = _split_accuracy("dev")
+    hold_p, hold_n = _split_accuracy("holdout")
+    dev_acc = dev_p / dev_n if dev_n else 0.0
+    hold_acc = hold_p / hold_n if hold_n else 0.0
     print("-" * 66)
-    print(f"  accuracy: {passed}/{total} = {accuracy:.1%} (gate: {min_accuracy:.0%})")
+    print(f"  dev      : {dev_p}/{dev_n} = {dev_acc:.1%}  (reported, not gated)")
+    print(f"  held-out : {hold_p}/{hold_n} = {hold_acc:.1%}  (gate: >= {min_accuracy:.0%})")
     print("=" * 66)
 
     # Print every miss's detail HERE, from the test that actually fails, so the
@@ -257,10 +291,11 @@ def test_zz_accuracy_summary() -> None:
     if DIAGNOSTICS:
         print("\n--- MISS DETAILS " + "-" * 49)
         for item_id, detail in DIAGNOSTICS.items():
-            print(f"\n  [{item_id}] {detail}")
+            split = SPLIT_OF.get(item_id, "?")
+            print(f"\n  [{split}] [{item_id}] {detail}")
         print("-" * 66)
 
-    assert accuracy >= min_accuracy, (
-        f"accuracy {accuracy:.1%} is below the EVAL_MIN_ACCURACY gate "
-        f"of {min_accuracy:.0%}"
+    assert hold_acc >= min_accuracy, (
+        f"held-out accuracy {hold_acc:.1%} ({hold_p}/{hold_n}) is below the "
+        f"EVAL_MIN_ACCURACY gate of {min_accuracy:.0%}"
     )
