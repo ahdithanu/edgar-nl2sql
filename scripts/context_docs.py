@@ -94,7 +94,7 @@ CONTEXT_DOCS: list[dict] = [
             company_id     INT NOT NULL REFERENCES companies(id),
             filing_id      INT REFERENCES filings(id),
             metric         TEXT NOT NULL,   -- exactly one of: 'revenue','net_income','total_assets','total_liabilities','eps_diluted'
-            fiscal_year    INT NOT NULL,    -- 2020..2024 (company fiscal year label)
+            fiscal_year    INT NOT NULL,    -- company fiscal year label (range: see data coverage doc)
             fiscal_period  TEXT NOT NULL,   -- 'FY','Q1','Q2','Q3','Q4'
             value          NUMERIC NOT NULL,-- raw units: whole US dollars, or dollars-per-share for eps_diluted
             unit           TEXT NOT NULL,   -- 'USD' or 'USD/share'
@@ -172,7 +172,7 @@ CONTEXT_DOCS: list[dict] = [
         "column",
         "financial_metrics.fiscal_year — company fiscal year labels, not calendar years",
         """
-        Column financial_metrics.fiscal_year (INT, 2020..2024) is the
+        Column financial_metrics.fiscal_year (INT) is the
         COMPANY'S OWN fiscal year label, which may not match the calendar year:
         - AAPL fiscal 2023 ended late September 2023.
         - MSFT fiscal 2024 ended June 2024.
@@ -185,8 +185,8 @@ CONTEXT_DOCS: list[dict] = [
 
         When a question says "in 2023", interpret it as fiscal_year = 2023
         unless it explicitly says "calendar year". To be precise about actual
-        dates, check start_date/end_date. Available range: fiscal 2020-2024;
-        the latest complete year is fiscal 2024.
+        dates, check start_date/end_date. The loaded year range is stated in the
+        "data coverage" document, generated from the database itself.
         """,
     ),
     _doc(
@@ -642,20 +642,25 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "latest year available — data covers fiscal 2020 through fiscal 2024",
+        "latest year available — resolve it from the data, never hardcode it",
         """
-        The database contains fiscal years 2020 through 2024 only. When a
-        question says "latest", "most recent", "current", or "last year",
-        use fiscal_year = 2024 (the latest complete fiscal year for every
-        covered company). There is no fiscal 2025 or partial-year data, and
-        nothing before fiscal 2020.
-
-        A robust alternative that never hardcodes the year:
+        When a question says "latest", "most recent", "current", or "last
+        year", do NOT hardcode a year. Resolve it from the data:
             WHERE fm.fiscal_year = (SELECT MAX(fiscal_year) FROM financial_metrics)
+        or, for one company:
+            ... ORDER BY fm.fiscal_year DESC LIMIT 1
 
-        If a question asks about a year outside 2020-2024, the correct
-        behavior is to say the data does not cover it, not to silently
-        substitute a different year.
+        The exact loaded range is stated in the "data coverage" document,
+        which is generated from the database itself rather than written by
+        hand, so it cannot drift from what is actually loaded.
+
+        The most recent fiscal year is often PARTIAL: a company whose fiscal
+        year has not ended yet has quarterly rows but no FY row. For annual
+        questions prefer the latest year that actually has fiscal_period='FY'
+        for that company, rather than the global MAX.
+
+        If a question asks about a year outside the loaded range, say the
+        data does not cover it rather than substituting a nearby year.
         """,
     ),
     _doc(
@@ -745,7 +750,7 @@ CONTEXT_DOCS: list[dict] = [
 
         If a query legitimately returns zero rows, the likely causes are, in
         order: misspelled metric, impossible fiscal_period for the metric,
-        a company outside the 25 covered, or a year outside 2020-2024.
+        a company or a fiscal year the database does not cover.
         """,
     ),
 ]
