@@ -46,6 +46,7 @@
   .stat-chips{display:flex;flex-wrap:wrap;gap:10px;font-family:var(--mono);font-size:12.5px}
   .stat-chips > span{border:1px solid var(--border);background:var(--surface);color:var(--mono-light);padding:7px 12px;border-radius:5px}
   .stat-chips .hl{color:var(--green)}
+  .scope-note{font-family:var(--mono);font-size:12.5px;line-height:1.6;color:var(--muted);max-width:70ch;margin:16px 0 0}
 
   .console-section{padding:16px 0 56px}
   .console{border:1px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden}
@@ -170,6 +171,7 @@
     <nav>
       <a href="#pipeline">pipeline</a>
       <a href="#discipline">discipline</a>
+      <a href="#limits">limits</a>
       <a href="#scope">scope</a>
       <a href="/docs">api docs</a>
     </nav>
@@ -187,6 +189,7 @@
       <span>3-attempt retry cap</span>
       <span><span class="hl">eval-gated</span> CI</span>
     </div>
+    <p class="scope-note">The 25 companies span 18 SIC industries, picked so questions hit different filing structures rather than to sample the market by size. The window is five fiscal years, 2020 through 2024.</p>
   </section>
 
   <!-- CONSOLE (live — wired to the real API) -->
@@ -273,6 +276,20 @@
       <div class="card"><div class="k">deploy</div><div class="t">staging → prod</div><div class="d">Both deploys run behind the eval gate. Staging is automatic on a green build; production is a manual promotion of the same gated pipeline.</div></div>
       <div class="card"><div class="k green">safety</div><div class="t">SELECT-only enforcement</div><div class="d">Parsed at the app layer and backed by a READ ONLY transaction. Two independent locks, not one prompt instruction.</div></div>
       <div class="card"><div class="k red">cost</div><div class="t">3-attempt cap</div><div class="d">Retries are bounded so a pathological question can't burn unbounded tokens or wall-clock time.</div></div>
+    </div>
+  </section>
+
+  <!-- WHERE IT BREAKS -->
+  <section class="band" id="limits">
+    <h2>Where it breaks</h2>
+    <p class="band-sub">Taken from the one held-out eval miss and manual probing. Named, not hedged. Reproduce any of these by asking the question in the console above.</p>
+    <div class="scope-list">
+      <div class="scope-item"><span class="x" style="color:var(--red)">wrong</span><div><b>Cross-sector revenue comparison.</b> <span class="d">Ask it to compare a bank and a product company on revenue and it returns both figures with a confident ratio ("2.4 times"). A bank's revenue and Apple's product revenue are not the same line economically, and nothing flags that. It returns a confident, misleading comparison.</span></div></div>
+      <div class="scope-item"><span class="x" style="color:var(--gold)">units</span><div><b>Net margin as a ratio, not a percent.</b> <span class="d">It returns 0.21, not 21%. The value is right and the unit is never stated, so a caller expecting a percent is off by 100x. This is the single question the held-out eval set fails.</span></div></div>
+      <div class="scope-item"><span class="x" style="color:var(--red)">wrong</span><div><b>Calendar years answered with fiscal periods.</b> <span class="d">Ask for "the calendar year ending December 2022" and it sums fiscal quarters that do not line up with calendar boundaries, then reports the total as calendar-year revenue. Confidently wrong.</span></div></div>
+      <div class="scope-item"><span class="x" style="color:var(--gold)">approx</span><div><b>Derived Q4 presented as reported.</b> <span class="d">Q4 for revenue, net income, and EPS is computed as the full year minus Q1 through Q3. That is exact for dollar flows, but for EPS it is an approximation because share counts move across quarters. The answer does not say it was derived.</span></div></div>
+      <div class="scope-item"><span class="x" style="color:var(--gold)">assumes</span><div><b>Missing time period, filled in silently.</b> <span class="d">Ask "What was Microsoft's revenue?" with no year and it returns all five years as a trend rather than asking which one. It resolves the ambiguity by guessing, not by surfacing it.</span></div></div>
+      <div class="scope-item"><span class="x" style="color:var(--green)">holds</span><div><b>Out of scope, refused not faked.</b> <span class="d">Questions outside the five stored metrics or the five-year window (operating income, R&D, gross margin, fiscal 2019) return a refusal that names what is missing, not a fabricated number. Verified against all four.</span></div></div>
     </div>
   </section>
 
