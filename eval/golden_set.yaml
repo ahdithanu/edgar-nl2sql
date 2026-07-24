@@ -191,7 +191,7 @@
     ORDER BY c.ticker
   check: relative
 
-# --- ambiguous phrasing (should resolve to latest FY = 2024) --------------------
+# --- ambiguous phrasing ("latest" must be resolved from the data, not pinned) ---
 
 - id: latest_revenue_walmart
   question: "What is Walmart's latest annual revenue?"

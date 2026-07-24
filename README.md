@@ -82,7 +82,7 @@ flowchart LR
 | API | FastAPI + uvicorn, Python 3.12 |
 | SQL validation | sqlglot (Postgres dialect) |
 | Logging | structlog, JSON to stdout, request-ID bound |
-| Data source | SEC EDGAR XBRL company facts (25 large-cap companies, FY2020–2024) |
+| Data source | SEC EDGAR XBRL company facts (478 largest US filers by market cap, FY2020–2026) |
 
 ## Setup
 
@@ -99,8 +99,10 @@ cp .env.example .env        # then fill in DATABASE_URL and the API keys
 # 1. Create tables + pgvector extension (idempotent)
 psql "$DATABASE_URL" -f scripts/schema.sql
 
-# 2. Load SEC EDGAR financials for the 25 tracked companies (idempotent upserts)
-python scripts/load_edgar.py
+# 2. Load SEC EDGAR financials (idempotent upserts).
+#    Default is a curated 25-company set; --top-n loads the largest N US filers
+#    by market cap from SEC's own ordering (the live demo uses --top-n 500).
+python scripts/load_edgar.py --top-n 500
 
 # 3. Embed the schema/glossary corpus into rag_documents
 python scripts/build_embeddings.py
@@ -181,14 +183,25 @@ The eval harness executes each golden question's `reference_sql` for ground trut
 the full pipeline (retry loop included), and compares result sets with a 1% numeric
 tolerance.
 
-**Current golden-set accuracy: 17/17 = 100%**, reproduced on two consecutive runs
-against the live database (2026-07-19).
+The set is split into two, reported separately so tuning cannot hide inside a blended
+number. The **dev** set (17 questions) was written alongside the prompt and corpus; the
+**held-out** set (14) was written afterward and never used to tune anything, so it is the
+honest generalization measure.
 
-The CI gate is `EVAL_MIN_ACCURACY=0.85` — deliberately below the measured baseline. The
-gate is on **aggregate** accuracy, not per-item: individual misses print full diagnostics
-but only the summary test fails the build. An LLM-backed pipeline is nondeterministic, so
-failing on any single miss would make the threshold decorative and block deploys on
-sampling noise; 85% catches a real regression while tolerating ~2 unlucky rolls of 17.
+**Current accuracy, against the 478-company dataset (2026-07-24), stable over two runs:**
+
+| Split | Accuracy | Gated? |
+|---|---|---|
+| dev | 17/17 = 100% | reported, not gated |
+| held-out | 13/14 = 92.9% | **CI gate: ≥ 85%** |
+
+The gate is on the held-out split (gating the tuned set would reward overfitting) and on
+its **aggregate**, not per-item: individual misses print full diagnostics but only the
+summary test fails the build. An LLM-backed pipeline is nondeterministic, so failing on any
+single miss would make the threshold decorative and block deploys on sampling noise; 85%
+catches a real regression while tolerating a couple of unlucky rolls. The one persistent
+held-out miss is documented under "Where it breaks" on the landing page (net margin
+returned as a ratio, not a percentage).
 
 ### Known failure modes
 
@@ -207,7 +220,7 @@ sampling noise; 85% catches a real regression while tolerating ~2 unlucky rolls 
   `FY − (Q1+Q2+Q3)`, since 10-Ks report the full year rather than a fourth quarter. Exact
   for revenue and net income; approximate for EPS, where share-count changes across
   quarters make the subtraction slightly lossy.
-- **Coverage gaps by design.** 25 companies, FY2020–2024, five metrics. Anything else
+- **Coverage gaps by design.** 478 companies, FY2020–2026, five metrics. Anything else
   (R&D spend, cash flow, headcount, non-US filers) correctly returns a refusal, not a guess.
 
 ## Docker

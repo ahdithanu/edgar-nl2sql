@@ -162,6 +162,33 @@ def test_failure_answer_is_readable_not_a_stack_trace(monkeypatch):
     assert resp.answer  # never empty, per QueryResponse contract
 
 
+def test_all_null_result_is_not_success(monkeypatch):
+    """A single row whose every cell is NULL is not an answer.
+
+    Regression for the trap the expanded dataset exposed: asking for an
+    unstored metric makes the model emit SUM(value) FILTER (WHERE metric=...)
+    over a filter that matches nothing, which returns one row of NULL. That is
+    one row, so the plain `if not rows` empty check missed it and it was scored
+    as success with a fabricated {value: None}. It must be treated as empty and
+    retried, not returned as a real result.
+    """
+    executions: list[str] = []
+
+    def fake_execute(sql):
+        executions.append(sql)
+        if len(executions) == 1:
+            return [{"gross_margin": None}]  # all-NULL: no answer
+        return list(ROWS)  # a real answer on the retry
+
+    monkeypatch.setattr(pipeline, "execute_readonly", fake_execute)
+
+    resp = pipeline.run_pipeline("gross margin?", "req-null")
+
+    assert resp.attempts[0].outcome == "empty_result"
+    assert len(executions) == 2  # the all-NULL row triggered a retry
+    assert resp.success is True  # the retry produced a real row
+
+
 def test_unanswerable_question_short_circuits_without_retrying(monkeypatch):
     """A refusal is a conclusion, not a failure — stop at one attempt.
 
