@@ -330,3 +330,53 @@ def test_every_attempt_emits_sql_attempt_event(monkeypatch):
             assert field in event
     assert events[0]["outcome"] == "execution_error"
     assert events[1]["outcome"] == "success"
+
+
+def test_validation_result_is_logged_for_pass_and_fail(monkeypatch):
+    """The guard verdict is logged as its own `sql_validated` event.
+
+    Both outcomes must be observable in the log trail: a passing validation is
+    logged with passed=True, a rejection with passed=False and the reason.
+    Regression guard for the audit finding that a *passing* validation emitted
+    no discrete event and was only inferable from the attempt outcome.
+    """
+    validated: list[dict] = []
+
+    class FakeLogger:
+        def info(self, event, **kwargs):
+            if event == "sql_validated":
+                validated.append(kwargs)
+
+        def warning(self, event, **kwargs):
+            pass
+
+        def error(self, event, **kwargs):
+            pass
+
+    monkeypatch.setattr(pipeline, "logger", FakeLogger())
+
+    # Attempt 1 generates SQL the guard rejects; attempt 2 generates valid SQL.
+    sqls = iter(["DELETE FROM companies", "SELECT 1"])
+
+    def fake_generate(question, context, prior):
+        return next(sqls), None
+
+    def fake_validate(sql):
+        if sql.strip().upper().startswith("SELECT"):
+            return sql
+        raise SQLGuardError("Top-level statement is DELETE, not SELECT.")
+
+    monkeypatch.setattr(pipeline, "generate_sql", fake_generate)
+    monkeypatch.setattr(pipeline, "validate_sql", fake_validate)
+    monkeypatch.setattr(pipeline, "execute_readonly", lambda sql: list(ROWS))
+
+    pipeline.run_pipeline("Revenue?", "req-val")
+
+    assert len(validated) == 2
+    assert validated[0] == {
+        "request_id": "req-val",
+        "attempt_number": 1,
+        "passed": False,
+        "reason": "Top-level statement is DELETE, not SELECT.",
+    }
+    assert validated[1] == {"request_id": "req-val", "attempt_number": 2, "passed": True}

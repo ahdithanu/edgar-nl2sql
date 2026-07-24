@@ -204,19 +204,40 @@ def run_pipeline(question: str, request_id: str) -> QueryResponse:
         try:
             sql = validate_sql(sql)
         except SQLGuardError as exc:
+            # Log the validation result explicitly (failed), separate from the
+            # attempt event, so "did the guard pass?" is directly queryable in
+            # the logs rather than inferred from the attempt outcome.
+            reason = getattr(exc, "reason", None) or str(exc)
+            logger.info(
+                "sql_validated",
+                request_id=request_id,
+                attempt_number=attempt_number,
+                passed=False,
+                reason=reason,
+            )
             attempt = SQLAttempt(
                 attempt_number=attempt_number,
                 sql=sql,
                 outcome="guard_rejected",
                 # The guard's reason is the feedback — e.g. "INSERT is not
                 # allowed" tells the model exactly what to stop doing.
-                error_message=getattr(exc, "reason", None) or str(exc),
+                error_message=reason,
                 correction_reasoning=correction_reasoning,
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
             attempts.append(attempt)
             _log_attempt(request_id, attempt)
             continue
+
+        # Validation passed. Logged as its own event so every request's log
+        # trail shows the guard verdict on every attempt, pass or fail — not
+        # only the rejections.
+        logger.info(
+            "sql_validated",
+            request_id=request_id,
+            attempt_number=attempt_number,
+            passed=True,
+        )
 
         # --- Execute inside a READ ONLY transaction with a statement
         # timeout and a row cap (see app/db.py).
