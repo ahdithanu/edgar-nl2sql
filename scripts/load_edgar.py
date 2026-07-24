@@ -83,7 +83,14 @@ MIN_REQUEST_INTERVAL_S = 0.15
 MAX_RETRIES = 5
 
 FISCAL_YEAR_MIN = 2020
-FISCAL_YEAR_MAX = 2024
+# Upper bound follows the wall clock rather than a pinned constant, which would
+# silently stop ingesting new filings the moment the year rolled over (the
+# original 2024 pin did exactly that: by mid-2026 the loader was dropping two
+# years of available data and the model was correctly refusing to answer about
+# them). Companies that label fiscal years ahead of the calendar (NVDA's FY2026
+# ended January 2026) are captured because the label, not the end date, is
+# compared. Override with --fiscal-year-max for a reproducible historical load.
+FISCAL_YEAR_MAX = dt.date.today().year
 
 # us-gaap tag fallbacks: companies report under different tags depending on
 # era and industry — and can switch tags mid-history. Fallback is applied per
@@ -461,6 +468,39 @@ def fetch_cik_map(client: EdgarClient) -> dict[str, tuple[str, str]]:
     return mapping
 
 
+def fetch_top_tickers(client: EdgarClient, top_n: int) -> list[str]:
+    """The first `top_n` tickers in SEC's company_tickers.json, deduped by CIK.
+
+    WHY this is the universe rule: SEC publishes that file ordered by market
+    capitalization descending (NVDA, AAPL, GOOGL, MSFT, ... at the top; mid-caps
+    by a few hundred in). Taking a prefix of it is a systematic, reproducible
+    selection with no hand-picking and no third-party index list to scrape. The
+    honest description of the resulting corpus is "the largest N US-listed
+    filers by market cap, per SEC's own ordering".
+
+    Deduped by CIK because share classes are separate tickers on one filer
+    (GOOGL/GOOG, BRK-B/BRK-A). Loading both would violate companies.cik UNIQUE
+    and double-count the issuer; we keep the higher-ranked ticker.
+
+    Foreign private issuers (ASML, Lloyds, Equinor) appear in this ordering but
+    file 20-F with IFRS tags rather than 10-K/10-Q with us-gaap, so they yield
+    no facts and are skipped downstream. That is expected, not an error: the
+    load summary reports how many of the N candidates actually produced data.
+    """
+    raw = client.get_json(TICKER_MAP_URL)
+    seen_ciks: set[str] = set()
+    tickers: list[str] = []
+    for entry in raw.values():  # dict preserves the file's rank order
+        if len(tickers) >= top_n:
+            break
+        cik = f"{int(entry['cik_str']):010d}"
+        if cik in seen_ciks:
+            continue  # another share class of an issuer we already queued
+        seen_ciks.add(cik)
+        tickers.append(entry["ticker"].upper())
+    return tickers
+
+
 def process_company(client: EdgarClient, ticker: str, cik: str, name: str) -> CompanyLoad:
     """Fetch + normalize everything for one company (no DB access here).
 
@@ -612,10 +652,30 @@ def print_summary(loads: list[CompanyLoad], failed: list[str], dry_run: bool) ->
 
 
 def main() -> int:
+    # Declared up front: argparse reads FISCAL_YEAR_MAX for its default below,
+    # and Python forbids `global` after a name is used in the same scope.
+    global FISCAL_YEAR_MAX
+
     parser = argparse.ArgumentParser(description="Load SEC EDGAR facts into Postgres.")
     parser.add_argument(
         "--tickers",
-        help="Comma-separated subset to load (default: all 25 contract tickers)",
+        help="Comma-separated subset to load (overrides --top-n)",
+    )
+    parser.add_argument(
+        "--top-n",
+        type=int,
+        default=None,
+        help=(
+            "Load the largest N US filers by market cap, per SEC's "
+            "company_tickers.json ordering, deduped by CIK. Default: the "
+            "curated DEFAULT_TICKERS list."
+        ),
+    )
+    parser.add_argument(
+        "--fiscal-year-max",
+        type=int,
+        default=FISCAL_YEAR_MAX,
+        help=f"Highest fiscal year label to keep (default: {FISCAL_YEAR_MAX}, the current year)",
     )
     parser.add_argument(
         "--dry-run",
@@ -624,13 +684,19 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    tickers = (
-        [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
-        if args.tickers
-        else DEFAULT_TICKERS
-    )
+    # Applied as a module global because select_periods() filters against it.
+    FISCAL_YEAR_MAX = args.fiscal_year_max
 
     client = EdgarClient()
+
+    if args.tickers:
+        tickers = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+    elif args.top_n:
+        print(f"Resolving the top {args.top_n} tickers by market cap from SEC...")
+        tickers = fetch_top_tickers(client, args.top_n)
+    else:
+        tickers = DEFAULT_TICKERS
+    print(f"Universe: {len(tickers)} tickers | fiscal years {FISCAL_YEAR_MIN}-{FISCAL_YEAR_MAX}")
     loads: list[CompanyLoad] = []
     failed: list[str] = []
 
