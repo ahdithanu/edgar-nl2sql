@@ -5,7 +5,7 @@ Why this file matters more than it looks
 This system does retrieval-BEFORE-generation: when a question arrives, we
 embed it, pull the top-k most similar documents from this corpus (stored in
 `rag_documents` with pgvector), and inject them verbatim into the SQL
-generation prompt. The model never sees the live database — these documents
+generation prompt. The model never sees the live database, these documents
 ARE its knowledge of the schema, the data's quirks, and the SQL idioms that
 work. Every eval failure traces back to either a missing document here or a
 document that didn't say the crucial thing plainly.
@@ -15,7 +15,7 @@ Design principles for the docs below:
   questions ("net margin", "biggest company", "Q3 revenue") to exactly the
   right guidance.
 - State exact values (metric names, fiscal_period values, ticker symbols)
-  rather than describing them — the model copies literals out of context.
+  rather than describing them, the model copies literals out of context.
 - Include worked SQL for every non-trivial pattern (ratios, YoY,
   superlatives). Models imitate examples far more reliably than prose.
 - Repeat the two data gotchas (flow vs instant semantics; derived Q4)
@@ -35,13 +35,13 @@ def _doc(doc_type: str, title: str, content: str) -> dict:
 
 CONTEXT_DOCS: list[dict] = [
     # ------------------------------------------------------------------
-    # table_schema (3): one per table — DDL + semantics + join keys
+    # table_schema (3): one per table, DDL + semantics + join keys
     # ------------------------------------------------------------------
     _doc(
         "table_schema",
         "companies table schema",
         """
-        Table `companies` — one row per SEC-registered company (25 rows total).
+        Table `companies`, one row per SEC-registered company (25 rows total).
 
         CREATE TABLE companies (
             id               SERIAL PRIMARY KEY,
@@ -62,7 +62,7 @@ CONTEXT_DOCS: list[dict] = [
         "table_schema",
         "filings table schema",
         """
-        Table `filings` — one row per SEC filing (10-K annual report or 10-Q
+        Table `filings`, one row per SEC filing (10-K annual report or 10-Q
         quarterly report) that supplied metric values.
 
         CREATE TABLE filings (
@@ -77,7 +77,7 @@ CONTEXT_DOCS: list[dict] = [
 
         Join keys: filings.company_id = companies.id;
         financial_metrics.filing_id = filings.id.
-        Most metric questions do NOT need this table — join it only when the
+        Most metric questions do NOT need this table, join it only when the
         question asks about the filing itself (form type, filing date,
         accession number), e.g. "When did Apple file its fiscal 2023 10-K?"
         """,
@@ -86,7 +86,7 @@ CONTEXT_DOCS: list[dict] = [
         "table_schema",
         "financial_metrics table schema",
         """
-        Table `financial_metrics` — the fact table. One row per company per
+        Table `financial_metrics`, the fact table. One row per company per
         metric per fiscal period. This is where all numeric answers live.
 
         CREATE TABLE financial_metrics (
@@ -112,7 +112,7 @@ CONTEXT_DOCS: list[dict] = [
               AND fm.fiscal_year = 2023
               AND fm.fiscal_period = 'FY';
 
-        ALWAYS filter all three of metric, fiscal_year, and fiscal_period —
+        ALWAYS filter all three of metric, fiscal_year, and fiscal_period,
         omitting fiscal_period mixes annual and quarterly rows and inflates
         sums by roughly 2x.
         """,
@@ -122,10 +122,10 @@ CONTEXT_DOCS: list[dict] = [
     # ------------------------------------------------------------------
     _doc(
         "column",
-        "financial_metrics.metric — the five exact metric values",
+        "financial_metrics.metric: the five exact metric values",
         """
         Column financial_metrics.metric holds EXACTLY these five strings
-        (lowercase, snake_case — any other spelling matches zero rows):
+        (lowercase, snake_case, any other spelling matches zero rows):
 
         - 'revenue'            total revenue / net sales / top line (unit 'USD')
         - 'net_income'         net income / profit / earnings / bottom line (unit 'USD')
@@ -139,12 +139,12 @@ CONTEXT_DOCS: list[dict] = [
         "assets" -> 'total_assets'; "liabilities", "debt" (loosely) -> 'total_liabilities'
         "EPS", "earnings per share" -> 'eps_diluted'
         There are NO other metrics (no gross margin, cash, dividends, or share
-        count columns) — derived quantities must be computed from these five.
+        count columns), derived quantities must be computed from these five.
         """,
     ),
     _doc(
         "column",
-        "financial_metrics.fiscal_period — FY vs quarters, flow vs instant, derived Q4",
+        "financial_metrics.fiscal_period: FY vs quarters, flow vs instant, derived Q4",
         """
         Column financial_metrics.fiscal_period is one of 'FY','Q1','Q2','Q3','Q4'.
         Its meaning depends on the metric type:
@@ -152,7 +152,7 @@ CONTEXT_DOCS: list[dict] = [
         FLOW metrics ('revenue', 'net_income', 'eps_diluted') accumulate over
         a period. Rows exist for FY and Q1..Q4 per fiscal year:
         - 'FY' is the full-year total reported in the 10-K. For annual
-          questions use fiscal_period = 'FY' — do NOT sum the four quarters.
+          questions use fiscal_period = 'FY', do NOT sum the four quarters.
         - 'Q4' is DERIVED as FY - (Q1 + Q2 + Q3) because companies file a
           10-K instead of a fourth 10-Q. Exact for dollar amounts; for
           eps_diluted it is an approximation (share counts vary by quarter).
@@ -161,7 +161,7 @@ CONTEXT_DOCS: list[dict] = [
         are point-in-time snapshots. Rows exist ONLY for Q1, Q2, Q3, and FY:
         - The 'FY' row IS the fiscal-year-end balance; there is no 'Q4' row.
           A query for total_assets with fiscal_period = 'Q4' returns zero rows.
-        - Never SUM balance snapshots across periods — a year-end balance is
+        - Never SUM balance snapshots across periods, a year-end balance is
           the FY row, not an aggregate.
 
         Rule of thumb: "for the year" => fiscal_period = 'FY';
@@ -170,7 +170,7 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "column",
-        "financial_metrics.fiscal_year — company fiscal year labels, not calendar years",
+        "financial_metrics.fiscal_year: company fiscal year labels, not calendar years",
         """
         Column financial_metrics.fiscal_year (INT) is the
         COMPANY'S OWN fiscal year label, which may not match the calendar year:
@@ -191,7 +191,7 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "column",
-        "financial_metrics.value and unit — raw dollars, not millions",
+        "financial_metrics.value and unit: raw dollars, not millions",
         """
         Column financial_metrics.value is NUMERIC in RAW units:
         - unit = 'USD': whole US dollars. Apple's fiscal 2023 revenue is
@@ -210,7 +210,7 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "column",
-        "companies.ticker vs companies.name — how to match a company",
+        "companies.ticker vs companies.name: how to match a company",
         """
         Two ways to identify a company; prefer ticker when you know it:
         - companies.ticker: uppercase symbol, exact match: WHERE c.ticker = 'AAPL'.
@@ -232,12 +232,12 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "column",
-        "financial_metrics.start_date and end_date — period windows",
+        "financial_metrics.start_date and end_date: period windows",
         """
         Columns start_date / end_date (DATE) give the actual calendar window
         each row covers:
         - Flow rows (revenue, net_income, eps_diluted): start_date..end_date
-          spans the period — roughly 90 days for quarters, roughly 365 days
+          spans the period, roughly 90 days for quarters, roughly 365 days
           for FY rows.
         - Instant rows (total_assets, total_liabilities): start_date is NULL;
           end_date is the balance-sheet snapshot date.
@@ -246,19 +246,19 @@ CONTEXT_DOCS: list[dict] = [
         quarter ending in June 2023"): filter on end_date ranges, e.g.
         WHERE fm.end_date BETWEEN '2023-06-01' AND '2023-07-31'.
         For ordinary fiscal-period questions, prefer fiscal_year +
-        fiscal_period filters — they are indexed and unambiguous.
+        fiscal_period filters, they are indexed and unambiguous.
         """,
     ),
     _doc(
         "column",
-        "companies.sic_description — industry classification",
+        "companies.sic_description: industry classification",
         """
         Column companies.sic_description holds the SEC's SIC industry label,
         e.g. 'Electronic Computers' (AAPL), 'Services-Prepackaged Software'
         (MSFT), 'National Commercial Banks' (JPM, BAC), 'Petroleum Refining'
         (XOM, CVX), 'Pharmaceutical Preparations' (JNJ, PFE).
 
-        These labels are narrow and idiosyncratic — for "tech companies" or
+        These labels are narrow and idiosyncratic, for "tech companies" or
         "banks" style questions, match broadly with ILIKE:
             WHERE c.sic_description ILIKE '%bank%'
         or simply enumerate the tickers you mean:
@@ -268,7 +268,7 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "sector and industry questions — banks, tech, energy, healthcare",
+        "sector and industry questions: banks, tech, energy, healthcare",
         """
         Questions about a GROUP of companies rather than named ones: "all
         banks", "the banks", "tech companies", "energy companies", "pharma",
@@ -277,13 +277,13 @@ CONTEXT_DOCS: list[dict] = [
         sector", "biggest bank by assets".
 
         These ARE answerable. companies.sic_description holds an SEC industry
-        label for every company in the database — there is no separate sector
+        label for every company in the database, there is no separate sector
         table, but the column is populated for all 25 companies, so never
         answer that industry information is unavailable.
 
         WHY THIS DOC EXISTS: questions like "average revenue growth across all
         banks" mix a sector filter with a metric concept, and retrieval tends
-        to return only growth/metric docs — leaving the model believing no
+        to return only growth/metric docs, leaving the model believing no
         industry data exists. It does. Match broadly with ILIKE:
 
             -- every bank's revenue growth 2022 -> 2023
@@ -303,13 +303,13 @@ CONTEXT_DOCS: list[dict] = [
         For finance broadly, include brokers: sic_description ILIKE '%bank%'
         OR sic_description ILIKE '%security brokers%' (GS).
 
-        If a sector label genuinely matches no company, say so — but check with
+        If a sector label genuinely matches no company, say so, but check with
         ILIKE first rather than assuming the classification does not exist.
         """,
     ),
     _doc(
         "column",
-        "financial_metrics.filing_id — linking metrics to their source filing",
+        "financial_metrics.filing_id: linking metrics to their source filing",
         """
         Column financial_metrics.filing_id references filings.id: the SEC
         filing the value came from. Annual (FY) rows and derived Q4 rows point
@@ -322,7 +322,7 @@ CONTEXT_DOCS: list[dict] = [
             JOIN filings f  ON f.id = fm.filing_id
             WHERE c.ticker = 'MSFT' AND fm.metric = 'net_income'
               AND fm.fiscal_year = 2024 AND fm.fiscal_period = 'FY';
-        filing_id can be NULL in edge cases — use LEFT JOIN if rows must not drop.
+        filing_id can be NULL in edge cases, use LEFT JOIN if rows must not drop.
         """,
     ),
     # ------------------------------------------------------------------
@@ -330,7 +330,7 @@ CONTEXT_DOCS: list[dict] = [
     # ------------------------------------------------------------------
     _doc(
         "glossary",
-        "revenue — definition (top line)",
+        "revenue: definition (top line)",
         """
         Revenue (also: sales, net sales, turnover, the "top line") is the
         total money a company earned from its business before any costs.
@@ -347,7 +347,7 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "net income — definition (bottom line)",
+        "net income: definition (bottom line)",
         """
         Net income (also: profit, net profit, earnings, the "bottom line") is
         what remains of revenue after all expenses and taxes. It can be
@@ -366,14 +366,14 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "total assets and total liabilities — balance sheet snapshots",
+        "total assets and total liabilities: balance sheet snapshots",
         """
         Total assets = everything a company owns; total liabilities =
         everything it owes. Both are INSTANT (point-in-time) balance-sheet
         metrics: metric = 'total_assets' / 'total_liabilities', unit 'USD'.
 
         Rows exist for fiscal_period 'Q1','Q2','Q3','FY' only. The FY row is
-        the fiscal-year-end snapshot — there is NO 'Q4' row for these metrics,
+        the fiscal-year-end snapshot, there is NO 'Q4' row for these metrics,
         and summing snapshots across periods is meaningless.
 
         "What were JPMorgan's total assets at the end of fiscal 2023?":
@@ -386,7 +386,7 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "shareholders equity — derived as assets minus liabilities",
+        "shareholders equity: derived as assets minus liabilities",
         """
         Shareholders' equity (book value, net worth) is NOT stored directly.
         Approximate it as total_assets - total_liabilities for the same
@@ -411,7 +411,7 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "EPS — diluted earnings per share",
+        "EPS: diluted earnings per share",
         """
         EPS (earnings per share) here is DILUTED EPS: net income divided by
         the weighted-average diluted share count, as reported by the company.
@@ -419,7 +419,7 @@ CONTEXT_DOCS: list[dict] = [
         $6.13 per share). Flow metric with FY and Q1..Q4 rows.
 
         Caveat: the Q4 EPS row is derived as FY - (Q1+Q2+Q3), which is only
-        approximately right because each quarter uses its own share count —
+        approximately right because each quarter uses its own share count,
         mention this if a question hinges on Q4 EPS precision.
 
         "What was Apple's diluted EPS in fiscal 2023?":
@@ -433,12 +433,12 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "net margin / profit margin — SQL pattern (two rows, one ratio)",
+        "net margin / profit margin: SQL pattern (two rows, one ratio)",
         """
         Net margin (profit margin) = net_income / revenue for the SAME company
         and SAME period. The two numbers live in two different rows of
         financial_metrics, so a ratio needs conditional aggregation (FILTER)
-        or a self-join — FILTER is cleaner:
+        or a self-join, FILTER is cleaner:
 
         "What was Apple's net margin in fiscal 2023?":
             SELECT
@@ -483,7 +483,7 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "year-over-year (YoY) growth — SQL pattern",
+        "year-over-year (YoY) growth: SQL pattern",
         """
         YoY growth compares a metric to the same period one fiscal year
         earlier: (current - prior) / prior. Self-join the metrics table on
@@ -505,19 +505,19 @@ CONTEXT_DOCS: list[dict] = [
               AND cur.fiscal_year = 2024 AND cur.fiscal_period = 'FY';
 
         For "fastest growing company", compute this per company (GROUP BY is
-        unnecessary — the self-join already yields one row per company) and
+        unnecessary, the self-join already yields one row per company) and
         ORDER BY yoy_growth_pct DESC LIMIT 1. Growth from a negative or zero
-        base is not meaningful — NULLIF guards the division.
+        base is not meaningful, NULLIF guards the division.
         """,
     ),
     _doc(
         "glossary",
-        "debt ratio / leverage — SQL pattern",
+        "debt ratio / leverage: SQL pattern",
         """
         Debt ratio (leverage) = total_liabilities / total_assets, same company
         and period. Values near 1.0 mean the company is highly leveraged
         (banks routinely ~0.9); low values mean asset-rich balance sheets.
-        Both are instant metrics — use fiscal_period = 'FY' for year-end.
+        Both are instant metrics, use fiscal_period = 'FY' for year-end.
 
         "Which company was most leveraged at the end of fiscal 2023?":
             SELECT c.ticker, c.name,
@@ -535,7 +535,7 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "return on assets (ROA) — SQL pattern mixing a flow and an instant",
+        "return on assets (ROA): SQL pattern mixing a flow and an instant",
         """
         ROA = net_income (a flow over the fiscal year, fiscal_period 'FY')
         divided by total_assets (a snapshot; use the same year's 'FY' row as
@@ -554,17 +554,17 @@ CONTEXT_DOCS: list[dict] = [
               AND fm.fiscal_year = 2024 AND fm.fiscal_period = 'FY';
 
         (Purists average beginning and ending assets; with this schema the
-        year-end snapshot is the standard simplification — say so in answers.)
+        year-end snapshot is the standard simplification, say so in answers.)
         """,
     ),
     _doc(
         "glossary",
-        "superlatives — biggest, largest, highest, most profitable",
+        "superlatives: biggest, largest, highest, most profitable",
         """
         "Biggest/largest company" by default means highest REVENUE; "most
         profitable" means highest NET INCOME (or highest net margin if the
         question says margin/percentage). "Most valuable" (market cap) is NOT
-        answerable from this data — no stock prices exist.
+        answerable from this data, no stock prices exist.
 
         Pattern: filter to ONE metric, ONE fiscal_year, fiscal_period = 'FY',
         then ORDER BY value DESC LIMIT 1 (or LIMIT N for "top N"):
@@ -594,7 +594,7 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "multi-company comparison — SQL pattern",
+        "multi-company comparison: SQL pattern",
         """
         "Compare X and Y" questions: filter tickers with IN, return one
         labeled row per company rather than doing arithmetic in your head:
@@ -622,10 +622,10 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "quarterly lookups — SQL pattern",
+        "quarterly lookups: SQL pattern",
         """
         Quarterly questions use fiscal_period 'Q1','Q2','Q3','Q4'. Remember
-        these are the COMPANY's fiscal quarters — Apple's Q1 ends in late
+        these are the COMPANY's fiscal quarters, Apple's Q1 ends in late
         December, Microsoft's Q1 ends in September.
 
         "What was Apple's revenue in Q1 of fiscal 2024?":
@@ -645,13 +645,13 @@ CONTEXT_DOCS: list[dict] = [
             ORDER BY fm.fiscal_period;
 
         Caveats: flow Q4 rows are derived (FY minus first three quarters);
-        balance metrics (total_assets/total_liabilities) have NO Q4 row —
+        balance metrics (total_assets/total_liabilities) have NO Q4 row,
         use 'FY' for their year-end value.
         """,
     ),
     _doc(
         "glossary",
-        "quarter-over-quarter (QoQ) growth — SQL pattern",
+        "quarter-over-quarter (QoQ) growth: SQL pattern",
         """
         QoQ growth compares consecutive quarters. Because quarters are labels
         ('Q1'..'Q4'), order rows by their actual end_date and use LAG:
@@ -669,13 +669,13 @@ CONTEXT_DOCS: list[dict] = [
             ORDER BY end_date;
 
         Ordering by end_date (not by the period string) is what makes the
-        window correct — it also works across fiscal-year boundaries if you
+        window correct, it also works across fiscal-year boundaries if you
         widen the fiscal_year filter.
         """,
     ),
     _doc(
         "glossary",
-        "latest year available — resolve it from the data, never hardcode it",
+        "latest year available: resolve it from the data, never hardcode it",
         """
         When a question says "latest", "most recent", "current", or "last
         year", do NOT hardcode a year. Resolve it from the data:
@@ -698,13 +698,13 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "trailing twelve months (TTM) — caveat and closest approximation",
+        "trailing twelve months (TTM): caveat and closest approximation",
         """
         TTM ("trailing twelve months", "last 12 months") normally means the
         four most recent quarters regardless of fiscal-year boundaries. This
         database is organized by fiscal year, so true rolling TTM as of an
         arbitrary date is awkward; the practical answer is the latest full
-        fiscal year (fiscal_period = 'FY', fiscal_year = 2024) — state that
+        fiscal year (fiscal_period = 'FY', fiscal_year = 2024), state that
         substitution explicitly in the answer.
 
         If genuinely needed, sum the four quarterly flow rows with the latest
@@ -718,22 +718,22 @@ CONTEXT_DOCS: list[dict] = [
               ORDER BY fm.end_date DESC
               LIMIT 4
             ) last_four;
-        Only valid for flow metrics — never sum balance-sheet snapshots.
+        Only valid for flow metrics, never sum balance-sheet snapshots.
         """,
     ),
     _doc(
         "glossary",
-        "FY is not the sum of quarters — prefer fiscal_period = 'FY'",
+        "FY is not the sum of quarters: prefer fiscal_period = 'FY'",
         """
         For annual totals ALWAYS use the fiscal_period = 'FY' row rather than
         SUM over Q1..Q4, even though both should be close:
         - The FY row is the audited figure straight from the 10-K.
         - Q4 is derived (FY minus first three quarters), so summing quarters
-          just reconstructs FY with extra steps and rounding noise — and for
+          just reconstructs FY with extra steps and rounding noise, and for
           eps_diluted the quarterly sum can differ noticeably from the true
           FY figure.
         - For total_assets/total_liabilities, summing periods is meaningless
-          (snapshots, not flows) — the FY row alone is the year-end balance.
+          (snapshots, not flows), the FY row alone is the year-end balance.
 
         Wrong:  SELECT SUM(value) ... WHERE fiscal_period IN ('Q1','Q2','Q3','Q4')
         Right:  SELECT value       ... WHERE fiscal_period = 'FY'
@@ -741,10 +741,10 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "companies covered — the 25 tickers in this database",
+        "companies covered: the 25 tickers in this database",
         """
         Exactly 25 large-cap US companies are covered. Questions about any
-        other company (e.g. Intel, Berkshire, Oracle) cannot be answered —
+        other company (e.g. Intel, Berkshire, Oracle) cannot be answered,
         say so rather than guessing a substitute.
 
         Tech: AAPL (Apple), MSFT (Microsoft), GOOGL (Alphabet/Google),
@@ -764,7 +764,7 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "common query pitfalls — checklist before finalizing SQL",
+        "common query pitfalls: checklist before finalizing SQL",
         """
         The five bugs that account for most wrong answers on this schema:
 
@@ -788,7 +788,7 @@ CONTEXT_DOCS: list[dict] = [
     ),
 ]
 
-# Fail fast at import time if a title collides — rag_documents keys on title,
+# Fail fast at import time if a title collides, rag_documents keys on title,
 # and a silent overwrite in build_embeddings would drop a doc from the corpus.
 _titles = [d["title"] for d in CONTEXT_DOCS]
 assert len(_titles) == len(set(_titles)), "CONTEXT_DOCS titles must be unique"
