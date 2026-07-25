@@ -132,7 +132,7 @@ def build_coverage_doc() -> dict:
     - A question about a year outside {yr_min}-{yr_max} is not answerable from
       this database. Say so rather than substituting a nearby year.
     """
-    return _doc_dict("glossary", "data coverage — companies, years, and partial-year caveat", content)
+    return _doc_dict("glossary", "data coverage: companies, years, and partial-year caveat", content)
 
 
 def _doc_dict(doc_type: str, title: str, content: str) -> dict:
@@ -172,14 +172,17 @@ def main() -> int:
     upserted = 0
     with psycopg.connect(settings.database_url) as conn:
         with conn.cursor() as cur:
+            # Clear the whole table first, then insert the current corpus. WHY
+            # not per-title upsert: a per-title delete only replaces docs whose
+            # title is unchanged. When a doc is RENAMED (or removed from the
+            # corpus), its old row survives as an orphan and keeps getting
+            # retrieved. A full rebuild makes rag_documents exactly mirror the
+            # corpus, which is the single source of truth. The corpus is small,
+            # so re-inserting all of it is cheap, and it runs in one
+            # transaction so retrieval never sees an empty table.
+            cur.execute("DELETE FROM rag_documents")
             for doc, embedding in zip(docs, embeddings):
                 vector_param = "[" + ",".join(str(v) for v in embedding) + "]"
-                # Delete-then-insert keyed on title: simplest correct upsert
-                # for a small corpus, and it guarantees stale content/doc_type
-                # never survives a rerun.
-                cur.execute(
-                    "DELETE FROM rag_documents WHERE title = %s", (doc["title"],)
-                )
                 cur.execute(
                     """
                     INSERT INTO rag_documents (doc_type, title, content, embedding)

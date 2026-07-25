@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>edgar-nl-sql — ask SEC financial data in plain English</title>
+<title>edgar-nl-sql: ask SEC financial data in plain English</title>
 <!-- Implements the EdgarQuery design (claude.ai/design project 96ab55cb) with the
      console wired to the live API instead of canned data. Single file on purpose:
      the page exists to make the pipeline observable, not to be a product. -->
@@ -181,7 +181,7 @@
   <section class="hero">
     <div class="kicker">Natural language → SQL over SEC EDGAR</div>
     <h1>Ask financial questions in English. Get <em>the SQL</em> and the answer.</h1>
-    <p class="lede">It retrieves the relevant schema and business terms first, writes the query, checks its own work against a read-only guard, and retries when it's wrong — capped, logged, and measured on every request.</p>
+    <p class="lede">It retrieves the relevant schema and business terms first, writes the query, checks its own work against a read-only guard, and retries when it's wrong. Every request is capped, logged, and measured.</p>
     <div class="stat-chips">
       <span>478 public companies</span>
       <span>FY2020–2026</span>
@@ -192,7 +192,7 @@
     <p class="scope-note">The 478 companies are the largest US-listed filers by market cap, taken from the ordering SEC publishes in company_tickers.json, so the selection is a rule, not a hand-picked list. They span 153 SIC industries. Fiscal years run 2020 through 2026; the newest year is partial, since most companies have not filed it yet.</p>
   </section>
 
-  <!-- CONSOLE (live — wired to the real API) -->
+  <!-- CONSOLE (live, wired to the real API) -->
   <section class="console-section">
     <div class="console">
 
@@ -226,7 +226,7 @@
 
       <div class="log-block">
         <div class="panel-label">retry log</div>
-        <div class="log" id="log"><span class="idle">— idle. run a query to trace the pipeline.</span></div>
+        <div class="log" id="log"><span class="idle">idle. run a query to trace the pipeline.</span></div>
       </div>
 
       <div class="output" id="output" hidden>
@@ -257,11 +257,11 @@
     <h2>The pipeline</h2>
     <p class="band-sub">Five steps per request. The loop between execute and generate is the interesting part.</p>
     <div class="steps">
-      <div class="step"><span class="n">01</span><div><div class="t">Embed &amp; retrieve</div><div class="d">The question is embedded and matched against schema chunks and a business-term glossary in pgvector — so the model sees the right tables and definitions before it writes anything.</div></div></div>
-      <div class="step"><span class="n">02</span><div><div class="t">Generate with schema in prompt</div><div class="d">Retrieved context is assembled into the prompt and the model emits a single SQL statement — no free-roaming table access, just the columns it was shown.</div></div></div>
+      <div class="step"><span class="n">01</span><div><div class="t">Embed &amp; retrieve</div><div class="d">The question is embedded and matched against schema chunks and a business-term glossary in pgvector, so the model sees the right tables and definitions before it writes anything.</div></div></div>
+      <div class="step"><span class="n">02</span><div><div class="t">Generate with schema in prompt</div><div class="d">Retrieved context is assembled into the prompt and the model emits a single SQL statement, with no free-roaming table access, just the columns it was shown.</div></div></div>
       <div class="step"><span class="n">03</span><div><div class="t">Validate read-only &amp; execute</div><div class="d">The statement is parsed and rejected unless it's a single SELECT. Only then does it run against Postgres, inside a READ ONLY transaction with a statement timeout.</div></div></div>
-      <div class="step retry"><span class="n">04</span><div><div class="t">Feed the error back &amp; retry — capped at 3</div><div class="d">If execution errors or returns nothing, the exact failure is fed back to generate for another attempt. Hard cap of 3 attempts bounds latency and cost; past that it fails loud, not silent.</div></div></div>
-      <div class="step"><span class="n">05</span><div><div class="t">Synthesize the answer</div><div class="d">Result rows are handed back to the model to produce a plain-English answer alongside the raw table — so a reader gets both the takeaway and the receipts.</div></div></div>
+      <div class="step retry"><span class="n">04</span><div><div class="t">Feed the error back &amp; retry, capped at 3</div><div class="d">If execution errors or returns nothing, the exact failure is fed back to generate for another attempt. Hard cap of 3 attempts bounds latency and cost; past that it fails loud, not silent.</div></div></div>
+      <div class="step"><span class="n">05</span><div><div class="t">Synthesize the answer</div><div class="d">Result rows are handed back to the model to produce a plain-English answer alongside the raw table, so a reader gets both the takeaway and the receipts.</div></div></div>
     </div>
   </section>
 
@@ -288,7 +288,8 @@
       <div class="scope-item"><span class="x" style="color:var(--gold)">units</span><div><b>Net margin as a ratio, not a percent.</b> <span class="d">It returns 0.21, not 21%. The value is right and the unit is never stated, so a caller expecting a percent is off by 100x. This is the single question the held-out eval set fails.</span></div></div>
       <div class="scope-item"><span class="x" style="color:var(--red)">wrong</span><div><b>Calendar years answered with fiscal periods.</b> <span class="d">Ask for "the calendar year ending December 2022" and it sums fiscal quarters that do not line up with calendar boundaries, then reports the total as calendar-year revenue. Confidently wrong.</span></div></div>
       <div class="scope-item"><span class="x" style="color:var(--gold)">approx</span><div><b>Derived Q4 presented as reported.</b> <span class="d">Q4 for revenue, net income, and EPS is computed as the full year minus Q1 through Q3. That is exact for dollar flows, but for EPS it is an approximation because share counts move across quarters. The answer does not say it was derived.</span></div></div>
-      <div class="scope-item"><span class="x" style="color:var(--gold)">assumes</span><div><b>Missing time period, filled in silently.</b> <span class="d">Ask "What was Microsoft's revenue?" with no year and it returns all five years as a trend rather than asking which one. It resolves the ambiguity by guessing, not by surfacing it.</span></div></div>
+      <div class="scope-item"><span class="x" style="color:var(--gold)">assumes</span><div><b>Missing time period, filled in silently.</b> <span class="d">Ask "What was Microsoft's revenue?" with no year and it returns every year as a trend rather than asking which one. It resolves the ambiguity by guessing, not by surfacing it.</span></div></div>
+      <div class="scope-item"><span class="x" style="color:var(--gold)">assumes</span><div><b>Ambiguous sector terms, silently narrowed or widened.</b> <span class="d">Ask for "all energy companies" and the answer depends on whether it reads that as petroleum refiners only or oil, gas, and utilities broadly. Across 478 filers the two readings differ by orders of magnitude, and it picks one without saying which. Name the SIC sector precisely to get a stable answer.</span></div></div>
       <div class="scope-item"><span class="x" style="color:var(--green)">holds</span><div><b>Out of scope, refused not faked.</b> <span class="d">Questions outside the five stored metrics or the loaded year range (operating income, R&D, gross margin, fiscal 2019) return a refusal that names what is missing, not a fabricated number. Verified against all four.</span></div></div>
     </div>
   </section>
@@ -440,7 +441,7 @@ async function ask() {
   btn.disabled = true; btn.textContent = "Running…";
 
   setStage(0, "active");
-  logLine("info", `POST /query — "${question}"`);
+  logLine("info", `POST /query · "${question}"`);
   // Optimistic progression while the request is in flight; the real attempt
   // history is replayed from the response when it lands.
   const opt1 = setTimeout(() => {
@@ -469,7 +470,7 @@ async function ask() {
   if (!resp.ok) {
     const detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
     setStage(0, "error");
-    logLine("error", `HTTP ${resp.status} — ${detail}`);
+    logLine("error", `HTTP ${resp.status} · ${detail}`);
     btn.disabled = false; btn.textContent = "Run query";
     return;
   }
@@ -484,7 +485,7 @@ async function replay(r) {
   resetStages(); resetLog();
   const attempts = r.attempts || [];
   setStage(0, "active");
-  logLine("info", `POST /query — "${r.question}"`);
+  logLine("info", `POST /query · "${r.question}"`);
   await wait(350);
   setStage(0, "done");
   logLine("info", "retrieved schema + business glossary via pgvector");
@@ -493,9 +494,9 @@ async function replay(r) {
     if (a.correction_reasoning) {
       setStage(1, "active"); setStage(2, "idle"); setStage(3, "idle");
       const d = $("#diagnosing");
-      d.innerHTML = `<b>diagnosing</b> — ${esc(a.correction_reasoning)} <span style="color:var(--dim)">(attempt ${a.attempt_number} of 3)</span>`;
+      d.innerHTML = `<b>diagnosing</b> · ${esc(a.correction_reasoning)} <span style="color:var(--dim)">(attempt ${a.attempt_number} of 3)</span>`;
       d.hidden = false;
-      logLine("info", `diagnosing — feeding the failure back to generate (${a.attempt_number}/3)`);
+      logLine("info", `diagnosing · feeding the failure back to generate (${a.attempt_number}/3)`);
       await wait(900);
       d.hidden = true;
     } else {
@@ -504,12 +505,12 @@ async function replay(r) {
     }
 
     // The model refused: it reported the schema cannot answer this question.
-    // No SQL was generated, so nothing was validated or executed — say exactly
+    // No SQL was generated, so nothing was validated or executed. Say exactly
     // that instead of falling through to the generic "generated SQL" path,
     // which would claim steps that never happened.
     if (a.outcome === "unanswerable") {
       setStage(1, "done");
-      logLine("attempt", `attempt ${a.attempt_number} — model declined to write SQL`);
+      logLine("attempt", `attempt ${a.attempt_number} · model declined to write SQL`);
       await wait(350);
       logLine("info", `reason: ${a.error_message || "not answerable from this schema"}`);
       // Downstream stages never ran; leave them idle rather than mid-flight.
@@ -521,7 +522,7 @@ async function replay(r) {
     currentSql = a.sql || "";
     if (currentSql) { $("#sql-code").innerHTML = highlightSQL(currentSql); $("#output").hidden = false; }
     setStage(1, "done"); setStage(2, "active");
-    logLine("attempt", `attempt ${a.attempt_number} — generated SQL`);
+    logLine("attempt", `attempt ${a.attempt_number} · generated SQL`);
     await wait(350);
 
     if (a.outcome === "guard_rejected") {
@@ -531,7 +532,7 @@ async function replay(r) {
       continue;
     }
     setStage(2, "done"); setStage(3, "active");
-    logLine("info", "validation passed — single read-only SELECT");
+    logLine("info", "validation passed · single read-only SELECT");
     await wait(350);
 
     if (a.outcome === "execution_error") {
@@ -540,7 +541,7 @@ async function replay(r) {
       await wait(500);
     } else if (a.outcome === "empty_result") {
       setStage(3, "error");
-      logLine("error", "query ran but returned 0 rows — treating as a miss");
+      logLine("error", "query ran but returned 0 rows, treating as a miss");
       await wait(500);
     } else if (a.outcome === "success") {
       setStage(3, "done"); setStage(4, "active");
@@ -552,13 +553,13 @@ async function replay(r) {
     }
   }
 
-  // "Exhausted" only applies when attempts were actually spent failing — a
+  // "Exhausted" only applies when attempts were actually spent failing. A
   // refusal is a deliberate stop, not a budget running out.
   const refused = attempts.some((a) => a.outcome === "unanswerable");
   if (!r.success && !refused) {
-    logLine("error", "all attempts exhausted — returning what was tried");
+    logLine("error", "all attempts exhausted, returning what was tried");
   } else if (refused) {
-    logLine("info", "stopped after 1 attempt — no retries spent on an unanswerable question");
+    logLine("info", "stopped after 1 attempt, no retries spent on an unanswerable question");
   }
   renderOutput(r);
   renderContext(r.context_docs || []);
@@ -574,7 +575,7 @@ function renderOutput(r) {
   const finalSql = r.sql || (r.attempts?.length ? r.attempts[r.attempts.length - 1].sql : "");
   currentSql = finalSql || "";
   // Distinguish "we tried and everything failed" from "we deliberately didn't
-  // try" — claiming a validation step that never ran would be a lie.
+  // try", since claiming a validation step that never ran would be a lie.
   const refusedSql = (r.attempts || []).some((a) => a.outcome === "unanswerable");
   const emptyMsg = refusedSql
     ? "-- no SQL generated: the question isn't answerable from this schema"
