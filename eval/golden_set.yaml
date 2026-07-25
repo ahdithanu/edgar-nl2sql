@@ -118,6 +118,26 @@
     LIMIT 1
   check: exact
 
+# Ranking by a COMPUTED ratio over a partial period: companies missing either
+# input have a NULL ratio, and NULLs sort first under DESC. The reference
+# excludes them with HAVING; the pipeline must too, or it returns an
+# incomplete-data company as the false winner (the NEE/Q2-2025 bug).
+- id: highest_net_margin_q2_2025
+  question: "Which company had the highest net margin in Q2 2025?"
+  reference_sql: >
+    SELECT c.ticker
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE fm.metric IN ('net_income', 'revenue')
+      AND fm.fiscal_year = 2025 AND fm.fiscal_period = 'Q2'
+    GROUP BY c.ticker
+    HAVING SUM(fm.value) FILTER (WHERE fm.metric = 'net_income') IS NOT NULL
+       AND SUM(fm.value) FILTER (WHERE fm.metric = 'revenue') > 0
+    ORDER BY SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')
+           / SUM(fm.value) FILTER (WHERE fm.metric = 'revenue') DESC
+    LIMIT 1
+  check: exact
+
 # --- ratios (two metrics, same period) ---------------------------------------
 
 - id: net_margin_apple_2023

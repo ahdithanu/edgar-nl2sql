@@ -452,9 +452,33 @@ CONTEXT_DOCS: list[dict] = [
               AND fm.fiscal_year = 2023 AND fm.fiscal_period = 'FY';
 
         Result is a fraction (0.253 = 25.3%); multiply by 100 for percent.
-        For "which company had the highest net margin", GROUP BY c.ticker,
-        c.name and ORDER BY the ratio DESC LIMIT 1. Always NULLIF the
-        denominator to avoid division by zero.
+
+        RANKING BY A RATIO ("which company had the highest net margin"): a
+        company missing either metric for the period produces a NULL ratio, and
+        in Postgres NULLs sort FIRST under ORDER BY ... DESC. So a naive
+        ORDER BY net_margin DESC LIMIT 1 returns a company with INCOMPLETE data,
+        not the real leader. Exclude incomplete companies with HAVING so the
+        ranking only covers those that actually have both numbers:
+
+            SELECT c.ticker, c.name,
+              SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')
+              / SUM(fm.value) FILTER (WHERE fm.metric = 'revenue') AS net_margin
+            FROM financial_metrics fm
+            JOIN companies c ON c.id = fm.company_id
+            WHERE fm.metric IN ('net_income', 'revenue')
+              AND fm.fiscal_year = 2025 AND fm.fiscal_period = 'Q2'
+            GROUP BY c.ticker, c.name
+            HAVING SUM(fm.value) FILTER (WHERE fm.metric = 'net_income') IS NOT NULL
+               AND SUM(fm.value) FILTER (WHERE fm.metric = 'revenue') > 0
+            ORDER BY net_margin DESC
+            LIMIT 1;
+
+        This matters most for the newest quarter or fiscal year, where many
+        companies have filed one figure but not the other yet. The same HAVING
+        guard applies to ranking by ANY computed ratio (debt ratio, ROA, YoY
+        growth): require every input present, or incomplete rows win the sort.
+        For a single company's margin, NULLIF the denominator to avoid divide
+        by zero.
         """,
     ),
     _doc(
@@ -555,8 +579,17 @@ CONTEXT_DOCS: list[dict] = [
             LIMIT 1;
 
         For "smallest"/"lowest", ORDER BY fm.value ASC. Forgetting the
-        fiscal_period filter is the classic bug — it double-counts by mixing
+        fiscal_period filter is the classic bug: it double-counts by mixing
         FY rows with quarterly rows.
+
+        When the ranking key is a COMPUTED ratio (highest net margin, highest
+        debt ratio, fastest growth) rather than a raw stored value, a company
+        missing an input produces a NULL key, and NULLs sort FIRST under DESC,
+        so an incomplete company wins the top slot. Exclude those rows with a
+        HAVING clause that requires every input to be present (see the net
+        margin doc). A raw single-metric superlative like the example above is
+        not affected, because a company with no row for that metric simply does
+        not appear.
         """,
     ),
     _doc(
