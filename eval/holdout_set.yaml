@@ -163,8 +163,14 @@
 
 # --- sector aggregation (industry filter via sic_description) ----------------
 
-- id: h_energy_revenue_2023
-  question: "What was the combined revenue of all energy companies in fiscal 2023?"
+# Names the SIC sector precisely. An earlier version asked about "all energy
+# companies", which is underspecified across 478 filers: the model read it as
+# petroleum-only about two thirds of the time (matching this reference) and as
+# oil+gas+energy broadly the rest, and the two differ by orders of magnitude.
+# That ambiguity is a real limitation, documented under "Where it breaks", but
+# it made this a coin-flip test rather than a clean measure of sector filtering.
+- id: h_petroleum_revenue_2023
+  question: "What was the combined revenue of all petroleum refining companies in fiscal 2023?"
   reference_sql: >
     SELECT SUM(fm.value) AS total_revenue
     FROM financial_metrics fm
