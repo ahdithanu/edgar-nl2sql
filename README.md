@@ -184,15 +184,15 @@ the full pipeline (retry loop included), and compares result sets with a 1% nume
 tolerance.
 
 The set is split into two, reported separately so tuning cannot hide inside a blended
-number. The **dev** set (17 questions) was written alongside the prompt and corpus; the
+number. The **dev** set (18 questions) was written alongside the prompt and corpus; the
 **held-out** set (14) was written afterward and never used to tune anything, so it is the
 honest generalization measure.
 
-**Current accuracy, against the 478-company dataset (2026-07-24), stable over two runs:**
+**Current accuracy, against the 478-company dataset (2026-07-25), stable across runs:**
 
 | Split | Accuracy | Gated? |
 |---|---|---|
-| dev | 17/17 = 100% | reported, not gated |
+| dev | 18/18 = 100% | reported, not gated |
 | held-out | 13/14 = 92.9% | **CI gate: ≥ 85%** |
 
 The gate is on the held-out split (gating the tuned set would reward overfitting) and on

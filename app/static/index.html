@@ -320,8 +320,13 @@
 const $ = (s) => document.querySelector(s);
 const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+// Apostrophe maps to the NAMED entity &apos;, not the numeric &#39;. WHY: the
+// answer/SQL highlighters run digit regexes over already-escaped text, and the
+// "39" inside &#39; would get wrapped in a <span>, splitting the entity so the
+// browser rendered a literal "&#39;" in every possessive ("Apple's" -> "Apple&#39;s").
+// A named entity has no digits, so no highlighter can ever break it.
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
-  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[c]));
 
 const EXAMPLES = [
   "What was Apple's revenue in fiscal 2023?",
