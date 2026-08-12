@@ -61,6 +61,13 @@
   .env-pill.degraded .pd{background:var(--gold)}
   .env-pill.down{color:var(--red);border-color:rgba(240,100,95,0.4);background:rgba(240,100,95,0.08)}
   .env-pill.down .pd{background:var(--red)}
+  .head-right{display:flex;align-items:center;gap:10px}
+  .demo-btn{background:transparent;border:1px solid var(--border);border-radius:20px;color:var(--subtle);font-family:var(--mono);font-size:11.5px;padding:4px 11px;cursor:pointer}
+  .demo-btn:hover{border-color:var(--gold);color:var(--gold)}
+  body.demo-on .demo-btn{border-color:var(--gold);color:var(--gold);background:rgba(232,177,58,0.08)}
+  .demo-banner{font-family:var(--mono);font-size:11.5px;color:var(--gold);background:rgba(232,177,58,0.06);border-bottom:1px solid var(--border);padding:7px 16px}
+  body.demo-on .examples{opacity:0.4;pointer-events:none}
+  body.demo-on #ask-form input{border-color:var(--gold)}
 
   .input-row{padding:20px 16px 4px}
   .field-label{display:block;font-family:var(--mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-bottom:9px}
@@ -202,8 +209,12 @@
           <span class="path">/query</span>
           <span class="ver">· api.v1</span>
         </div>
-        <div class="env-pill" id="env-pill"><span class="pd"></span><span id="env-label">checking…</span></div>
+        <div class="head-right">
+          <button id="demo-btn" class="demo-btn" type="button">&#9656; Auto-demo</button>
+          <div class="env-pill" id="env-pill"><span class="pd"></span><span id="env-label">checking…</span></div>
+        </div>
       </div>
+      <div class="demo-banner" id="demo-banner" hidden>Auto-demo: cycling real production queries. Press Esc or Stop to try it yourself.</div>
 
       <div class="input-row">
         <label class="field-label" for="question">question</label>
@@ -611,6 +622,403 @@ function renderContext(docs) {
       <pre>${esc(d.content)}</pre>
     </details>`).join("");
 }
+
+const DEMO_RESPONSES = [
+  {
+    "request_id": "7c9244001ffc4312bf94d5644cd21ddb",
+    "question": "How did NVIDIA's revenue grow from fiscal 2023 to fiscal 2025?",
+    "success": true,
+    "sql": "SELECT\n  y23.value AS revenue_fy2023,\n  y25.value AS revenue_fy2025,\n  (y25.value - y23.value) / NULLIF(y23.value, 0) * 100 AS growth_pct\nFROM financial_metrics y23\nJOIN financial_metrics y25\n  ON y25.company_id = y23.company_id\n AND y25.metric = y23.metric\n AND y25.fiscal_period = y23.fiscal_period\nJOIN companies c ON c.id = y23.company_id\nWHERE c.ticker = 'NVDA'\n  AND y23.metric = 'revenue'\n  AND y23.fiscal_period = 'FY'\n  AND y23.fiscal_year = 2023\n  AND y25.fiscal_year = 2025",
+    "rows": [
+      {
+        "revenue_fy2023": 26974000000.0,
+        "revenue_fy2025": 130497000000.0,
+        "growth_pct": 383.7880922369689
+      }
+    ],
+    "answer": "NVIDIA's revenue grew from $27.0 billion in fiscal 2023 to $130.5 billion in fiscal 2025, an increase of approximately 383.8%.",
+    "attempts": [
+      {
+        "attempt_number": 1,
+        "sql": "SELECT\n  y23.value AS revenue_fy2023,\n  y25.value AS revenue_fy2025,\n  (y25.value - y23.value) / NULLIF(y23.value, 0) * 100 AS growth_pct\nFROM financial_metrics y23\nJOIN financial_metrics y25\n  ON y25.company_id = y23.company_id\n AND y25.metric = y23.metric\n AND y25.fiscal_period = y23.fiscal_period\nJOIN companies c ON c.id = y23.company_id\nWHERE c.ticker = 'NVDA'\n  AND y23.metric = 'revenue'\n  AND y23.fiscal_period = 'FY'\n  AND y23.fiscal_year = 2023\n  AND y25.fiscal_year = 2025",
+        "outcome": "success",
+        "error_message": null,
+        "correction_reasoning": null,
+        "duration_ms": 5311
+      }
+    ],
+    "context_docs": [
+      {
+        "doc_type": "glossary",
+        "title": "year-over-year (YoY) growth: SQL pattern",
+        "content": "YoY growth compares a metric to the same period one fiscal year\nearlier: (current - prior) / prior. Self-join the metrics table on\nfiscal_year - 1 with the same company, metric, and fiscal_period:\n\n\"How much did NVIDIA's revenue grow in fis...",
+        "similarity": 0.5505
+      },
+      {
+        "doc_type": "glossary",
+        "title": "quarter-over-quarter (QoQ) growth: SQL pattern",
+        "content": "QoQ growth compares consecutive quarters. Because quarters are labels\n('Q1'..'Q4'), order rows by their actual end_date and use LAG:\n\n\"How did Netflix's revenue change quarter over quarter in fiscal 2023?\":\n    SELECT fiscal_year, fiscal_pe...",
+        "similarity": 0.4933
+      },
+      {
+        "doc_type": "column",
+        "title": "financial_metrics.fiscal_year: company fiscal year labels, not calendar years",
+        "content": "Column financial_metrics.fiscal_year (INT) is the\nCOMPANY'S OWN fiscal year label, which may not match the calendar year:\n- AAPL fiscal 2023 ended late September 2023.\n- MSFT fiscal 2024 ended June 2024.\n- NVDA labels years ahead: NVDA fisc...",
+        "similarity": 0.487
+      },
+      {
+        "doc_type": "glossary",
+        "title": "data coverage: companies, years, and partial-year caveat",
+        "content": "Data coverage, generated from the database at embedding time.\n\n- Companies: 478, spanning 153 SIC industry\n  classifications. These are the largest US-listed filers by market\n  capitalization, per the ordering SEC publishes in company_ticke...",
+        "similarity": 0.477
+      },
+      {
+        "doc_type": "glossary",
+        "title": "net income: definition (bottom line)",
+        "content": "Net income (also: profit, net profit, earnings, the \"bottom line\") is\nwhat remains of revenue after all expenses and taxes. It can be\nnegative (a net loss). Stored as metric = 'net_income', unit 'USD'.\nFlow metric: FY and Q1..Q4 rows (Q4 de...",
+        "similarity": 0.4743
+      },
+      {
+        "doc_type": "column",
+        "title": "financial_metrics.value and unit: raw dollars, not millions",
+        "content": "Column financial_metrics.value is NUMERIC in RAW units:\n- unit = 'USD': whole US dollars. Apple's fiscal 2023 revenue is\n  stored as 383285000000 (383.285 billion), NOT 383285 or 383.285.\n- unit = 'USD/share' (only for metric 'eps_diluted')...",
+        "similarity": 0.4662
+      }
+    ]
+  },
+  {
+    "request_id": "68d1afef5efb4a70b6b3989a9028818f",
+    "question": "What was Berkshire Hathaway's net margin in fiscal 2024?",
+    "success": true,
+    "sql": "SELECT\n  SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')\n  / NULLIF(SUM(fm.value) FILTER (WHERE fm.metric = 'revenue'), 0)\n  AS net_margin\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE c.name ILIKE '%berkshire hathaway%'\n  AND fm.metric IN ('net_income', 'revenue')\n  AND fm.fiscal_year = 2024 AND fm.fiscal_period = 'FY'",
+    "rows": [
+      {
+        "net_margin": 0.3563877075374228
+      }
+    ],
+    "answer": "Berkshire Hathaway's net margin for fiscal year 2024 was approximately 35.6%, meaning the company retained about $0.356 in net income for every dollar of revenue generated.",
+    "attempts": [
+      {
+        "attempt_number": 1,
+        "sql": "SELECT\n  SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')\n  / NULLIF(SUM(fm.value) FILTER (WHERE fm.metric = 'revenue'), 0)\n  AS net_margin\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE c.ticker = 'BRK.B'\n  AND fm.metric IN ('net_income', 'revenue')\n  AND fm.fiscal_year = 2024 AND fm.fiscal_period = 'FY'",
+        "outcome": "empty_result",
+        "error_message": "query returned no rows; this usually means a filter didn't match stored values \u2014 check metric names, fiscal_period values, and joins. If the data genuinely isn't in this schema, reply CANNOT_ANSWER: <reason> instead. Never return explanatory prose inside a SELECT literal.",
+        "correction_reasoning": null,
+        "duration_ms": 3266
+      },
+      {
+        "attempt_number": 2,
+        "sql": "SELECT\n  SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')\n  / NULLIF(SUM(fm.value) FILTER (WHERE fm.metric = 'revenue'), 0)\n  AS net_margin\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE c.name ILIKE '%berkshire hathaway%'\n  AND fm.metric IN ('net_income', 'revenue')\n  AND fm.fiscal_year = 2024 AND fm.fiscal_period = 'FY'",
+        "outcome": "success",
+        "error_message": null,
+        "correction_reasoning": "The previous attempt failed because the ticker 'BRK.B' likely isn't the exact stored ticker value in the companies table\u2014EDGAR filers commonly use 'BRK-B' or 'BRK.A'/'BRK-A' formatting, and the mismatch caused the join to return zero rows. To fix this, match by company name instead of guessing the ticker symbol format.",
+        "duration_ms": 5505
+      }
+    ],
+    "context_docs": [
+      {
+        "doc_type": "glossary",
+        "title": "net margin / profit margin: SQL pattern (two rows, one ratio)",
+        "content": "Net margin (profit margin) = net_income / revenue for the SAME company\nand SAME period. The two numbers live in two different rows of\nfinancial_metrics, so a ratio needs conditional aggregation (FILTER)\nor a self-join, FILTER is cleaner:\n\n\"...",
+        "similarity": 0.5107
+      },
+      {
+        "doc_type": "glossary",
+        "title": "net income: definition (bottom line)",
+        "content": "Net income (also: profit, net profit, earnings, the \"bottom line\") is\nwhat remains of revenue after all expenses and taxes. It can be\nnegative (a net loss). Stored as metric = 'net_income', unit 'USD'.\nFlow metric: FY and Q1..Q4 rows (Q4 de...",
+        "similarity": 0.4402
+      },
+      {
+        "doc_type": "glossary",
+        "title": "return on assets (ROA): SQL pattern mixing a flow and an instant",
+        "content": "ROA = net_income (a flow over the fiscal year, fiscal_period 'FY')\ndivided by total_assets (a snapshot; use the same year's 'FY' row as\nthe year-end approximation). Both rows share fiscal_year and\nfiscal_period = 'FY', so FILTER aggregation...",
+        "similarity": 0.4375
+      },
+      {
+        "doc_type": "glossary",
+        "title": "shareholders equity: derived as assets minus liabilities",
+        "content": "Shareholders' equity (book value, net worth) is NOT stored directly.\nApproximate it as total_assets - total_liabilities for the same\ncompany and period. Both metrics live in separate rows, so combine\nthem with conditional aggregation:\n\n\"Wha...",
+        "similarity": 0.4165
+      },
+      {
+        "doc_type": "glossary",
+        "title": "superlatives: biggest, largest, highest, most profitable",
+        "content": "\"Biggest/largest company\" by default means highest REVENUE; \"most\nprofitable\" means highest NET INCOME (or highest net margin if the\nquestion says margin/percentage). \"Most valuable\" (market cap) is NOT\nanswerable from this data, no stock p...",
+        "similarity": 0.4078
+      },
+      {
+        "doc_type": "column",
+        "title": "financial_metrics.fiscal_year: company fiscal year labels, not calendar years",
+        "content": "Column financial_metrics.fiscal_year (INT) is the\nCOMPANY'S OWN fiscal year label, which may not match the calendar year:\n- AAPL fiscal 2023 ended late September 2023.\n- MSFT fiscal 2024 ended June 2024.\n- NVDA labels years ahead: NVDA fisc...",
+        "similarity": 0.4004
+      }
+    ]
+  },
+  {
+    "request_id": "1c06885785674230b7126692599f7725",
+    "question": "Which company had the highest net margin in Q2 2025?",
+    "success": true,
+    "sql": "SELECT c.ticker, c.name,\n  SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')\n  / SUM(fm.value) FILTER (WHERE fm.metric = 'revenue') AS net_margin\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE fm.metric IN ('net_income', 'revenue')\n  AND fm.fiscal_year = 2025 AND fm.fiscal_period = 'Q2'\nGROUP BY c.ticker, c.name\nHAVING SUM(fm.value) FILTER (WHERE fm.metric = 'net_income') IS NOT NULL\n   AND SUM(fm.value) FILTER (WHERE fm.metric = 'revenue') > 0\nORDER BY net_margin DESC\nLIMIT 1",
+    "rows": [
+      {
+        "ticker": "MSTR",
+        "name": "Strategy Inc",
+        "net_margin": 87.52747886241353
+      }
+    ],
+    "answer": "Strategy Inc (MSTR) had the highest net margin in Q2 2025, with an exceptionally high net margin of approximately 8,753% (net income roughly 87.5 times revenue). This unusually large figure likely reflects non-operating gains rather than typical business profitability.",
+    "attempts": [
+      {
+        "attempt_number": 1,
+        "sql": "SELECT c.ticker, c.name,\n  SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')\n  / SUM(fm.value) FILTER (WHERE fm.metric = 'revenue') AS net_margin\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE fm.metric IN ('net_income', 'revenue')\n  AND fm.fiscal_year = 2025 AND fm.fiscal_period = 'Q2'\nGROUP BY c.ticker, c.name\nHAVING SUM(fm.value) FILTER (WHERE fm.metric = 'net_income') IS NOT NULL\n   AND SUM(fm.value) FILTER (WHERE fm.metric = 'revenue') > 0\nORDER BY net_margin DESC\nLIMIT 1",
+        "outcome": "success",
+        "error_message": null,
+        "correction_reasoning": null,
+        "duration_ms": 4368
+      }
+    ],
+    "context_docs": [
+      {
+        "doc_type": "glossary",
+        "title": "net margin / profit margin: SQL pattern (two rows, one ratio)",
+        "content": "Net margin (profit margin) = net_income / revenue for the SAME company\nand SAME period. The two numbers live in two different rows of\nfinancial_metrics, so a ratio needs conditional aggregation (FILTER)\nor a self-join, FILTER is cleaner:\n\n\"...",
+        "similarity": 0.5382
+      },
+      {
+        "doc_type": "glossary",
+        "title": "superlatives: biggest, largest, highest, most profitable",
+        "content": "\"Biggest/largest company\" by default means highest REVENUE; \"most\nprofitable\" means highest NET INCOME (or highest net margin if the\nquestion says margin/percentage). \"Most valuable\" (market cap) is NOT\nanswerable from this data, no stock p...",
+        "similarity": 0.4253
+      },
+      {
+        "doc_type": "glossary",
+        "title": "net income: definition (bottom line)",
+        "content": "Net income (also: profit, net profit, earnings, the \"bottom line\") is\nwhat remains of revenue after all expenses and taxes. It can be\nnegative (a net loss). Stored as metric = 'net_income', unit 'USD'.\nFlow metric: FY and Q1..Q4 rows (Q4 de...",
+        "similarity": 0.3996
+      },
+      {
+        "doc_type": "glossary",
+        "title": "data coverage: companies, years, and partial-year caveat",
+        "content": "Data coverage, generated from the database at embedding time.\n\n- Companies: 478, spanning 153 SIC industry\n  classifications. These are the largest US-listed filers by market\n  capitalization, per the ordering SEC publishes in company_ticke...",
+        "similarity": 0.3899
+      },
+      {
+        "doc_type": "glossary",
+        "title": "debt ratio / leverage: SQL pattern",
+        "content": "Debt ratio (leverage) = total_liabilities / total_assets, same company\nand period. Values near 1.0 mean the company is highly leveraged\n(banks routinely ~0.9); low values mean asset-rich balance sheets.\nBoth are instant metrics, use fiscal_...",
+        "similarity": 0.3889
+      },
+      {
+        "doc_type": "glossary",
+        "title": "multi-company comparison: SQL pattern",
+        "content": "\"Compare X and Y\" questions: filter tickers with IN, return one\nlabeled row per company rather than doing arithmetic in your head:\n\n\"Compare Coca-Cola and PepsiCo revenue in fiscal 2023\":\n    SELECT c.ticker, c.name, fm.value AS revenue\n   ...",
+        "similarity": 0.38
+      }
+    ]
+  },
+  {
+    "request_id": "57bcc517041846e5871773f121bcf115",
+    "question": "Compare Amazon and Walmart's revenue in fiscal 2024",
+    "success": true,
+    "sql": "SELECT c.ticker, c.name, fm.value AS revenue\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE c.ticker IN ('AMZN', 'WMT')\n  AND fm.metric = 'revenue'\n  AND fm.fiscal_year = 2024 AND fm.fiscal_period = 'FY'\nORDER BY fm.value DESC",
+    "rows": [
+      {
+        "ticker": "WMT",
+        "name": "Walmart Inc.",
+        "revenue": 642637000000.0
+      },
+      {
+        "ticker": "AMZN",
+        "name": "AMAZON COM INC",
+        "revenue": 637959000000.0
+      }
+    ],
+    "answer": "In fiscal year 2024, Walmart reported slightly higher revenue than Amazon, with $642.6 billion compared to Amazon's $638.0 billion. The two companies' revenues were quite close, with Walmart ahead by about $4.7 billion.",
+    "attempts": [
+      {
+        "attempt_number": 1,
+        "sql": "SELECT c.ticker, c.name, fm.value AS revenue\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE c.ticker IN ('AMZN', 'WMT')\n  AND fm.metric = 'revenue'\n  AND fm.fiscal_year = 2024 AND fm.fiscal_period = 'FY'\nORDER BY fm.value DESC",
+        "outcome": "success",
+        "error_message": null,
+        "correction_reasoning": null,
+        "duration_ms": 3692
+      }
+    ],
+    "context_docs": [
+      {
+        "doc_type": "glossary",
+        "title": "revenue: definition (top line)",
+        "content": "Revenue (also: sales, net sales, turnover, the \"top line\") is the\ntotal money a company earned from its business before any costs.\nStored as metric = 'revenue', unit 'USD', raw dollars. Flow metric:\nFY and Q1..Q4 rows exist (Q4 derived as F...",
+        "similarity": 0.5537
+      },
+      {
+        "doc_type": "glossary",
+        "title": "return on assets (ROA): SQL pattern mixing a flow and an instant",
+        "content": "ROA = net_income (a flow over the fiscal year, fiscal_period 'FY')\ndivided by total_assets (a snapshot; use the same year's 'FY' row as\nthe year-end approximation). Both rows share fiscal_year and\nfiscal_period = 'FY', so FILTER aggregation...",
+        "similarity": 0.5283
+      },
+      {
+        "doc_type": "glossary",
+        "title": "multi-company comparison: SQL pattern",
+        "content": "\"Compare X and Y\" questions: filter tickers with IN, return one\nlabeled row per company rather than doing arithmetic in your head:\n\n\"Compare Coca-Cola and PepsiCo revenue in fiscal 2023\":\n    SELECT c.ticker, c.name, fm.value AS revenue\n   ...",
+        "similarity": 0.5071
+      },
+      {
+        "doc_type": "glossary",
+        "title": "trailing twelve months (TTM): caveat and closest approximation",
+        "content": "TTM (\"trailing twelve months\", \"last 12 months\") normally means the\nfour most recent quarters regardless of fiscal-year boundaries. This\ndatabase is organized by fiscal year, so true rolling TTM as of an\narbitrary date is awkward; the pract...",
+        "similarity": 0.5047
+      },
+      {
+        "doc_type": "glossary",
+        "title": "data coverage: companies, years, and partial-year caveat",
+        "content": "Data coverage, generated from the database at embedding time.\n\n- Companies: 478, spanning 153 SIC industry\n  classifications. These are the largest US-listed filers by market\n  capitalization, per the ordering SEC publishes in company_ticke...",
+        "similarity": 0.4861
+      },
+      {
+        "doc_type": "glossary",
+        "title": "superlatives: biggest, largest, highest, most profitable",
+        "content": "\"Biggest/largest company\" by default means highest REVENUE; \"most\nprofitable\" means highest NET INCOME (or highest net margin if the\nquestion says margin/percentage). \"Most valuable\" (market cap) is NOT\nanswerable from this data, no stock p...",
+        "similarity": 0.4857
+      }
+    ]
+  },
+  {
+    "request_id": "c49b9e57dd6948e19485f22e36b408ee",
+    "question": "How much did Apple spend on R&D in fiscal 2024?",
+    "success": false,
+    "sql": null,
+    "rows": [],
+    "answer": "I can't answer that from this database. The schema's documented metrics (revenue, net_income, eps_diluted, total_assets, total_liabilities) do not include an R&D expense metric, so Apple's R&D spending cannot be retrieved. This dataset covers revenue, net income, total assets, total liabilities, and diluted EPS for 25 large US public companies, fiscal years 2020\u20132024.",
+    "attempts": [
+      {
+        "attempt_number": 1,
+        "sql": "",
+        "outcome": "unanswerable",
+        "error_message": "The schema's documented metrics (revenue, net_income, eps_diluted, total_assets, total_liabilities) do not include an R&D expense metric, so Apple's R&D spending cannot be retrieved.",
+        "correction_reasoning": null,
+        "duration_ms": 4391
+      }
+    ],
+    "context_docs": [
+      {
+        "doc_type": "glossary",
+        "title": "trailing twelve months (TTM): caveat and closest approximation",
+        "content": "TTM (\"trailing twelve months\", \"last 12 months\") normally means the\nfour most recent quarters regardless of fiscal-year boundaries. This\ndatabase is organized by fiscal year, so true rolling TTM as of an\narbitrary date is awkward; the pract...",
+        "similarity": 0.5136
+      },
+      {
+        "doc_type": "column",
+        "title": "financial_metrics.fiscal_year: company fiscal year labels, not calendar years",
+        "content": "Column financial_metrics.fiscal_year (INT) is the\nCOMPANY'S OWN fiscal year label, which may not match the calendar year:\n- AAPL fiscal 2023 ended late September 2023.\n- MSFT fiscal 2024 ended June 2024.\n- NVDA labels years ahead: NVDA fisc...",
+        "similarity": 0.4897
+      },
+      {
+        "doc_type": "glossary",
+        "title": "quarterly lookups: SQL pattern",
+        "content": "Quarterly questions use fiscal_period 'Q1','Q2','Q3','Q4'. Remember\nthese are the COMPANY's fiscal quarters, Apple's Q1 ends in late\nDecember, Microsoft's Q1 ends in September.\n\n\"What was Apple's revenue in Q1 of fiscal 2024?\":\n    SELECT f...",
+        "similarity": 0.4869
+      },
+      {
+        "doc_type": "glossary",
+        "title": "EPS: diluted earnings per share",
+        "content": "EPS (earnings per share) here is DILUTED EPS: net income divided by\nthe weighted-average diluted share count, as reported by the company.\nStored as metric = 'eps_diluted', unit 'USD/share' (e.g. 6.13 means\n$6.13 per share). Flow metric with...",
+        "similarity": 0.4812
+      },
+      {
+        "doc_type": "column",
+        "title": "financial_metrics.value and unit: raw dollars, not millions",
+        "content": "Column financial_metrics.value is NUMERIC in RAW units:\n- unit = 'USD': whole US dollars. Apple's fiscal 2023 revenue is\n  stored as 383285000000 (383.285 billion), NOT 383285 or 383.285.\n- unit = 'USD/share' (only for metric 'eps_diluted')...",
+        "similarity": 0.4748
+      },
+      {
+        "doc_type": "glossary",
+        "title": "return on assets (ROA): SQL pattern mixing a flow and an instant",
+        "content": "ROA = net_income (a flow over the fiscal year, fiscal_period 'FY')\ndivided by total_assets (a snapshot; use the same year's 'FY' row as\nthe year-end approximation). Both rows share fiscal_year and\nfiscal_period = 'FY', so FILTER aggregation...",
+        "similarity": 0.437
+      }
+    ]
+  }
+];
+
+// ---------------------------------------------------------------------------
+// Auto-demo: a hands-free tour that loops forever over real, pre-captured
+// production /query responses (DEMO_RESPONSES below), replayed through the same
+// UI as a live query. No API calls, so it can loop unattended at zero cost and
+// never breaks mid-loop. Start with the header button or /?demo=1.
+// ---------------------------------------------------------------------------
+let demoOn = false;
+
+function typeInto(el, text, perChar = 45) {
+  return new Promise((resolve) => {
+    el.value = "";
+    let i = 0;
+    const step = () => {
+      if (!demoOn) return resolve();
+      el.value = text.slice(0, ++i);
+      if (i >= text.length) return resolve();
+      timers.push(setTimeout(step, REDUCED ? 0 : perChar));
+    };
+    step();
+  });
+}
+
+// A hold that ends early if the demo is stopped, so Stop feels responsive.
+async function demoHold(ms) {
+  for (let t = 0; t < ms && demoOn; t += 200) await wait(200);
+}
+
+async function runDemo() {
+  if (demoOn) return;
+  demoOn = true;
+  document.body.classList.add("demo-on");
+  $("#demo-banner").hidden = false;
+  $("#demo-btn").innerHTML = "&#9632; Stop demo";
+  $("#ask-btn").disabled = true;
+  $("#question").readOnly = true;
+  let i = 0;
+  while (demoOn) {
+    const r = DEMO_RESPONSES[i % DEMO_RESPONSES.length];
+    // Fully clear the previous item BEFORE anything new appears, so the next
+    // question never types over the last answer.
+    clearTimers();
+    resetStages(); resetLog();
+    $("#output").hidden = true; $("#ctx-block").hidden = true; $("#diagnosing").hidden = true;
+    $("#answer").textContent = ""; $("#sql-code").textContent = "";
+    $("#rows-table").innerHTML = ""; $("#ctx-docs").innerHTML = "";
+    $("#question").value = "";
+    await demoHold(1100);        // a clean beat between queries
+    if (!demoOn) break;
+    await typeInto($("#question"), r.question);
+    if (!demoOn) break;
+    await demoHold(900);         // pause on the finished question before running
+    if (!demoOn) break;
+    await replay(r);             // same animation path as a live query
+    if (!demoOn) break;
+    await demoHold(r.attempts.length > 1 ? 11000 : 8000);  // long hold so the result is readable
+    i++;
+  }
+}
+
+function stopDemo() {
+  demoOn = false;
+  clearTimers();
+  document.body.classList.remove("demo-on");
+  $("#demo-banner").hidden = true;
+  $("#demo-btn").innerHTML = "&#9656; Auto-demo";
+  $("#ask-btn").disabled = false;
+  $("#question").readOnly = false;
+  resetStages(); resetLog();
+  $("#output").hidden = true; $("#ctx-block").hidden = true; $("#diagnosing").hidden = true;
+}
+
+$("#demo-btn").addEventListener("click", () => (demoOn ? stopDemo() : runDemo()));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && demoOn) stopDemo(); });
+// Any manual interaction with the input exits the demo so a viewer can take over.
+$("#question").addEventListener("mousedown", () => { if (demoOn) stopDemo(); });
+
+// Auto-start for a linkable/recordable loop: /?demo=1
+if (new URLSearchParams(location.search).get("demo") === "1") runDemo();
 </script>
 </body>
 </html>
