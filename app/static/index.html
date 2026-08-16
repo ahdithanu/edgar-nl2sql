@@ -949,7 +949,13 @@ const DEMO_RESPONSES = [
 // ---------------------------------------------------------------------------
 let demoOn = false;
 
-function typeInto(el, text, perChar = 45) {
+// Smooth-scroll an element into view during the demo (respects reduced motion).
+function demoScrollTo(sel, block) {
+  const el = document.querySelector(sel);
+  if (el) el.scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: block || "center" });
+}
+
+function typeInto(el, text, perChar = 60) {
   return new Promise((resolve) => {
     el.value = "";
     let i = 0;
@@ -987,15 +993,23 @@ async function runDemo() {
     $("#answer").textContent = ""; $("#sql-code").textContent = "";
     $("#rows-table").innerHTML = ""; $("#ctx-docs").innerHTML = "";
     $("#question").value = "";
-    await demoHold(1100);        // a clean beat between queries
+    // Bring the question box + pipeline into view for the setup of each item.
+    demoScrollTo(".input-row", "start");
+    await demoHold(1800);        // a clean beat between queries
     if (!demoOn) break;
     await typeInto($("#question"), r.question);
     if (!demoOn) break;
-    await demoHold(900);         // pause on the finished question before running
+    await demoHold(1400);        // pause on the finished question before running
     if (!demoOn) break;
     await replay(r);             // same animation path as a live query
     if (!demoOn) break;
-    await demoHold(r.attempts.length > 1 ? 11000 : 8000);  // long hold so the result is readable
+    // Reveal the generated SQL and the result table, and dwell so a viewer can
+    // actually read the query and the data, not just the one-line answer.
+    demoScrollTo("#output", "center");
+    await demoHold(r.attempts.length > 1 ? 9000 : 7000);
+    if (!demoOn) break;
+    demoScrollTo("#rows-table", "center");   // then linger on the returned rows
+    await demoHold(6000);
     i++;
   }
 }
