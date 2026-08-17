@@ -687,32 +687,24 @@ const DEMO_RESPONSES = [
     ]
   },
   {
-    "request_id": "68d1afef5efb4a70b6b3989a9028818f",
-    "question": "What was Berkshire Hathaway's net margin in fiscal 2024?",
+    "request_id": "ab1516f03893447ea91889ff1b3a5349",
+    "question": "What was Microsoft's net margin in fiscal 2023?",
     "success": true,
-    "sql": "SELECT\n  SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')\n  / NULLIF(SUM(fm.value) FILTER (WHERE fm.metric = 'revenue'), 0)\n  AS net_margin\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE c.name ILIKE '%berkshire hathaway%'\n  AND fm.metric IN ('net_income', 'revenue')\n  AND fm.fiscal_year = 2024 AND fm.fiscal_period = 'FY'",
+    "sql": "SELECT\n  SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')\n  / NULLIF(SUM(fm.value) FILTER (WHERE fm.metric = 'revenue'), 0)\n  AS net_margin\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE c.ticker = 'MSFT'\n  AND fm.metric IN ('net_income', 'revenue')\n  AND fm.fiscal_year = 2023\n  AND fm.fiscal_period = 'FY'",
     "rows": [
       {
-        "net_margin": 0.3563877075374228
+        "net_margin": 0.3414623787839464
       }
     ],
-    "answer": "Berkshire Hathaway's net margin for fiscal year 2024 was approximately 35.6%, meaning the company retained about $0.356 in net income for every dollar of revenue generated.",
+    "answer": "Microsoft's net margin for fiscal year 2023 was approximately 34.1%, meaning that for every dollar of revenue generated, the company retained about 34.1 cents as net income.",
     "attempts": [
       {
         "attempt_number": 1,
-        "sql": "SELECT\n  SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')\n  / NULLIF(SUM(fm.value) FILTER (WHERE fm.metric = 'revenue'), 0)\n  AS net_margin\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE c.ticker = 'BRK.B'\n  AND fm.metric IN ('net_income', 'revenue')\n  AND fm.fiscal_year = 2024 AND fm.fiscal_period = 'FY'",
-        "outcome": "empty_result",
-        "error_message": "query returned no rows; this usually means a filter didn't match stored values \u2014 check metric names, fiscal_period values, and joins. If the data genuinely isn't in this schema, reply CANNOT_ANSWER: <reason> instead. Never return explanatory prose inside a SELECT literal.",
-        "correction_reasoning": null,
-        "duration_ms": 3266
-      },
-      {
-        "attempt_number": 2,
-        "sql": "SELECT\n  SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')\n  / NULLIF(SUM(fm.value) FILTER (WHERE fm.metric = 'revenue'), 0)\n  AS net_margin\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE c.name ILIKE '%berkshire hathaway%'\n  AND fm.metric IN ('net_income', 'revenue')\n  AND fm.fiscal_year = 2024 AND fm.fiscal_period = 'FY'",
+        "sql": "SELECT\n  SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')\n  / NULLIF(SUM(fm.value) FILTER (WHERE fm.metric = 'revenue'), 0)\n  AS net_margin\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE c.ticker = 'MSFT'\n  AND fm.metric IN ('net_income', 'revenue')\n  AND fm.fiscal_year = 2023\n  AND fm.fiscal_period = 'FY'",
         "outcome": "success",
         "error_message": null,
-        "correction_reasoning": "The previous attempt failed because the ticker 'BRK.B' likely isn't the exact stored ticker value in the companies table\u2014EDGAR filers commonly use 'BRK-B' or 'BRK.A'/'BRK-A' formatting, and the mismatch caused the join to return zero rows. To fix this, match by company name instead of guessing the ticker symbol format.",
-        "duration_ms": 5505
+        "correction_reasoning": null,
+        "duration_ms": 4069
       }
     ],
     "context_docs": [
@@ -720,99 +712,37 @@ const DEMO_RESPONSES = [
         "doc_type": "glossary",
         "title": "net margin / profit margin: SQL pattern (two rows, one ratio)",
         "content": "Net margin (profit margin) = net_income / revenue for the SAME company\nand SAME period. The two numbers live in two different rows of\nfinancial_metrics, so a ratio needs conditional aggregation (FILTER)\nor a self-join, FILTER is cleaner:\n\n\"...",
-        "similarity": 0.5107
-      },
-      {
-        "doc_type": "glossary",
-        "title": "net income: definition (bottom line)",
-        "content": "Net income (also: profit, net profit, earnings, the \"bottom line\") is\nwhat remains of revenue after all expenses and taxes. It can be\nnegative (a net loss). Stored as metric = 'net_income', unit 'USD'.\nFlow metric: FY and Q1..Q4 rows (Q4 de...",
-        "similarity": 0.4402
-      },
-      {
-        "doc_type": "glossary",
-        "title": "return on assets (ROA): SQL pattern mixing a flow and an instant",
-        "content": "ROA = net_income (a flow over the fiscal year, fiscal_period 'FY')\ndivided by total_assets (a snapshot; use the same year's 'FY' row as\nthe year-end approximation). Both rows share fiscal_year and\nfiscal_period = 'FY', so FILTER aggregation...",
-        "similarity": 0.4375
+        "similarity": 0.5753
       },
       {
         "doc_type": "glossary",
         "title": "shareholders equity: derived as assets minus liabilities",
         "content": "Shareholders' equity (book value, net worth) is NOT stored directly.\nApproximate it as total_assets - total_liabilities for the same\ncompany and period. Both metrics live in separate rows, so combine\nthem with conditional aggregation:\n\n\"Wha...",
-        "similarity": 0.4165
+        "similarity": 0.5433
       },
       {
         "doc_type": "glossary",
-        "title": "superlatives: biggest, largest, highest, most profitable",
-        "content": "\"Biggest/largest company\" by default means highest REVENUE; \"most\nprofitable\" means highest NET INCOME (or highest net margin if the\nquestion says margin/percentage). \"Most valuable\" (market cap) is NOT\nanswerable from this data, no stock p...",
-        "similarity": 0.4078
+        "title": "quarterly lookups: SQL pattern",
+        "content": "Quarterly questions use fiscal_period 'Q1','Q2','Q3','Q4'. Remember\nthese are the COMPANY's fiscal quarters, Apple's Q1 ends in late\nDecember, Microsoft's Q1 ends in September.\n\n\"What was Apple's revenue in Q1 of fiscal 2024?\":\n    SELECT f...",
+        "similarity": 0.5262
       },
       {
         "doc_type": "column",
         "title": "financial_metrics.fiscal_year: company fiscal year labels, not calendar years",
         "content": "Column financial_metrics.fiscal_year (INT) is the\nCOMPANY'S OWN fiscal year label, which may not match the calendar year:\n- AAPL fiscal 2023 ended late September 2023.\n- MSFT fiscal 2024 ended June 2024.\n- NVDA labels years ahead: NVDA fisc...",
-        "similarity": 0.4004
-      }
-    ]
-  },
-  {
-    "request_id": "1c06885785674230b7126692599f7725",
-    "question": "Which company had the highest net margin in Q2 2025?",
-    "success": true,
-    "sql": "SELECT c.ticker, c.name,\n  SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')\n  / SUM(fm.value) FILTER (WHERE fm.metric = 'revenue') AS net_margin\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE fm.metric IN ('net_income', 'revenue')\n  AND fm.fiscal_year = 2025 AND fm.fiscal_period = 'Q2'\nGROUP BY c.ticker, c.name\nHAVING SUM(fm.value) FILTER (WHERE fm.metric = 'net_income') IS NOT NULL\n   AND SUM(fm.value) FILTER (WHERE fm.metric = 'revenue') > 0\nORDER BY net_margin DESC\nLIMIT 1",
-    "rows": [
-      {
-        "ticker": "MSTR",
-        "name": "Strategy Inc",
-        "net_margin": 87.52747886241353
-      }
-    ],
-    "answer": "Strategy Inc (MSTR) had the highest net margin in Q2 2025, with an exceptionally high net margin of approximately 8,753% (net income roughly 87.5 times revenue). This unusually large figure likely reflects non-operating gains rather than typical business profitability.",
-    "attempts": [
-      {
-        "attempt_number": 1,
-        "sql": "SELECT c.ticker, c.name,\n  SUM(fm.value) FILTER (WHERE fm.metric = 'net_income')\n  / SUM(fm.value) FILTER (WHERE fm.metric = 'revenue') AS net_margin\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE fm.metric IN ('net_income', 'revenue')\n  AND fm.fiscal_year = 2025 AND fm.fiscal_period = 'Q2'\nGROUP BY c.ticker, c.name\nHAVING SUM(fm.value) FILTER (WHERE fm.metric = 'net_income') IS NOT NULL\n   AND SUM(fm.value) FILTER (WHERE fm.metric = 'revenue') > 0\nORDER BY net_margin DESC\nLIMIT 1",
-        "outcome": "success",
-        "error_message": null,
-        "correction_reasoning": null,
-        "duration_ms": 4368
-      }
-    ],
-    "context_docs": [
-      {
-        "doc_type": "glossary",
-        "title": "net margin / profit margin: SQL pattern (two rows, one ratio)",
-        "content": "Net margin (profit margin) = net_income / revenue for the SAME company\nand SAME period. The two numbers live in two different rows of\nfinancial_metrics, so a ratio needs conditional aggregation (FILTER)\nor a self-join, FILTER is cleaner:\n\n\"...",
-        "similarity": 0.5382
-      },
-      {
-        "doc_type": "glossary",
-        "title": "superlatives: biggest, largest, highest, most profitable",
-        "content": "\"Biggest/largest company\" by default means highest REVENUE; \"most\nprofitable\" means highest NET INCOME (or highest net margin if the\nquestion says margin/percentage). \"Most valuable\" (market cap) is NOT\nanswerable from this data, no stock p...",
-        "similarity": 0.4253
+        "similarity": 0.5137
       },
       {
         "doc_type": "glossary",
         "title": "net income: definition (bottom line)",
         "content": "Net income (also: profit, net profit, earnings, the \"bottom line\") is\nwhat remains of revenue after all expenses and taxes. It can be\nnegative (a net loss). Stored as metric = 'net_income', unit 'USD'.\nFlow metric: FY and Q1..Q4 rows (Q4 de...",
-        "similarity": 0.3996
+        "similarity": 0.5041
       },
       {
         "doc_type": "glossary",
         "title": "data coverage: companies, years, and partial-year caveat",
         "content": "Data coverage, generated from the database at embedding time.\n\n- Companies: 478, spanning 153 SIC industry\n  classifications. These are the largest US-listed filers by market\n  capitalization, per the ordering SEC publishes in company_ticke...",
-        "similarity": 0.3899
-      },
-      {
-        "doc_type": "glossary",
-        "title": "debt ratio / leverage: SQL pattern",
-        "content": "Debt ratio (leverage) = total_liabilities / total_assets, same company\nand period. Values near 1.0 mean the company is highly leveraged\n(banks routinely ~0.9); low values mean asset-rich balance sheets.\nBoth are instant metrics, use fiscal_...",
-        "similarity": 0.3889
-      },
-      {
-        "doc_type": "glossary",
-        "title": "multi-company comparison: SQL pattern",
-        "content": "\"Compare X and Y\" questions: filter tickers with IN, return one\nlabeled row per company rather than doing arithmetic in your head:\n\n\"Compare Coca-Cola and PepsiCo revenue in fiscal 2023\":\n    SELECT c.ticker, c.name, fm.value AS revenue\n   ...",
-        "similarity": 0.38
+        "similarity": 0.4728
       }
     ]
   },
@@ -880,6 +810,66 @@ const DEMO_RESPONSES = [
         "title": "superlatives: biggest, largest, highest, most profitable",
         "content": "\"Biggest/largest company\" by default means highest REVENUE; \"most\nprofitable\" means highest NET INCOME (or highest net margin if the\nquestion says margin/percentage). \"Most valuable\" (market cap) is NOT\nanswerable from this data, no stock p...",
         "similarity": 0.4857
+      }
+    ]
+  },
+  {
+    "request_id": "567db748e42740e38539648fdef0c186",
+    "question": "What was the combined revenue of all petroleum refining companies in fiscal 2023?",
+    "success": true,
+    "sql": "SELECT SUM(fm.value) AS combined_revenue\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE c.sic_description ILIKE '%petroleum%'\n  AND fm.metric = 'revenue'\n  AND fm.fiscal_year = 2023\n  AND fm.fiscal_period = 'FY'",
+    "rows": [
+      {
+        "combined_revenue": 966902768000.0
+      }
+    ],
+    "answer": "The combined revenue of all petroleum refining companies in fiscal year 2023 was approximately $966.9 billion.",
+    "attempts": [
+      {
+        "attempt_number": 1,
+        "sql": "SELECT SUM(fm.value) AS combined_revenue\nFROM financial_metrics fm\nJOIN companies c ON c.id = fm.company_id\nWHERE c.sic_description ILIKE '%petroleum%'\n  AND fm.metric = 'revenue'\n  AND fm.fiscal_year = 2023\n  AND fm.fiscal_period = 'FY'",
+        "outcome": "success",
+        "error_message": null,
+        "correction_reasoning": null,
+        "duration_ms": 3001
+      }
+    ],
+    "context_docs": [
+      {
+        "doc_type": "glossary",
+        "title": "multi-company comparison: SQL pattern",
+        "content": "\"Compare X and Y\" questions: filter tickers with IN, return one\nlabeled row per company rather than doing arithmetic in your head:\n\n\"Compare Coca-Cola and PepsiCo revenue in fiscal 2023\":\n    SELECT c.ticker, c.name, fm.value AS revenue\n   ...",
+        "similarity": 0.49
+      },
+      {
+        "doc_type": "glossary",
+        "title": "data coverage: companies, years, and partial-year caveat",
+        "content": "Data coverage, generated from the database at embedding time.\n\n- Companies: 478, spanning 153 SIC industry\n  classifications. These are the largest US-listed filers by market\n  capitalization, per the ordering SEC publishes in company_ticke...",
+        "similarity": 0.4299
+      },
+      {
+        "doc_type": "table_schema",
+        "title": "financial_metrics table schema",
+        "content": "Table `financial_metrics`, the fact table. One row per company per\nmetric per fiscal period. This is where all numeric answers live.\n\nCREATE TABLE financial_metrics (\n    id             SERIAL PRIMARY KEY,\n    company_id     INT NOT NULL RE...",
+        "similarity": 0.4247
+      },
+      {
+        "doc_type": "glossary",
+        "title": "sector and industry questions: banks, tech, energy, healthcare",
+        "content": "Questions about a GROUP of companies rather than named ones: \"all\nbanks\", \"the banks\", \"tech companies\", \"energy companies\", \"pharma\",\n\"healthcare\", \"retailers\", \"which industry\", \"compare sectors\",\n\"average revenue growth across banks\", \"h...",
+        "similarity": 0.4242
+      },
+      {
+        "doc_type": "glossary",
+        "title": "net margin / profit margin: SQL pattern (two rows, one ratio)",
+        "content": "Net margin (profit margin) = net_income / revenue for the SAME company\nand SAME period. The two numbers live in two different rows of\nfinancial_metrics, so a ratio needs conditional aggregation (FILTER)\nor a self-join, FILTER is cleaner:\n\n\"...",
+        "similarity": 0.4114
+      },
+      {
+        "doc_type": "glossary",
+        "title": "superlatives: biggest, largest, highest, most profitable",
+        "content": "\"Biggest/largest company\" by default means highest REVENUE; \"most\nprofitable\" means highest NET INCOME (or highest net margin if the\nquestion says margin/percentage). \"Most valuable\" (market cap) is NOT\nanswerable from this data, no stock p...",
+        "similarity": 0.4078
       }
     ]
   },
@@ -993,9 +983,10 @@ async function runDemo() {
     $("#answer").textContent = ""; $("#sql-code").textContent = "";
     $("#rows-table").innerHTML = ""; $("#ctx-docs").innerHTML = "";
     $("#question").value = "";
-    // Bring the question box + pipeline into view for the setup of each item.
-    demoScrollTo(".input-row", "start");
-    await demoHold(1800);        // a clean beat between queries
+    // Bring the question box + pipeline into view, then hold on a clean, empty
+    // console so each result is clearly separated from the one before it.
+    demoScrollTo(".console-head", "start");
+    await demoHold(3200);        // deliberate gap between results
     if (!demoOn) break;
     await typeInto($("#question"), r.question);
     if (!demoOn) break;
@@ -1006,10 +997,10 @@ async function runDemo() {
     // Reveal the generated SQL and the result table, and dwell so a viewer can
     // actually read the query and the data, not just the one-line answer.
     demoScrollTo("#output", "center");
-    await demoHold(r.attempts.length > 1 ? 9000 : 7000);
+    await demoHold(7500);
     if (!demoOn) break;
     demoScrollTo("#rows-table", "center");   // then linger on the returned rows
-    await demoHold(6000);
+    await demoHold(6500);
     i++;
   }
 }
