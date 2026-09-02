@@ -138,6 +138,22 @@
     LIMIT 1
   check: exact
 
+# Sector-scoped superlative: the model used to refuse these ("no sector column
+# exists") because the industry doc did not surface for superlative phrasing.
+# The superlatives doc now names companies.sic_description, so a "which BANK..."
+# ranking filters by ILIKE and answers instead of refusing.
+- id: highest_net_income_bank_2024
+  question: "Which bank had the highest net income in fiscal 2024?"
+  reference_sql: >
+    SELECT c.ticker
+    FROM financial_metrics fm
+    JOIN companies c ON c.id = fm.company_id
+    WHERE fm.metric = 'net_income' AND fm.fiscal_year = 2024
+      AND fm.fiscal_period = 'FY' AND c.sic_description ILIKE '%bank%'
+    ORDER BY fm.value DESC
+    LIMIT 1
+  check: exact
+
 # --- ratios (two metrics, same period) ---------------------------------------
 
 - id: net_margin_apple_2023
