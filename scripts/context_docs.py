@@ -582,6 +582,27 @@ CONTEXT_DOCS: list[dict] = [
         fiscal_period filter is the classic bug: it double-counts by mixing
         FY rows with quarterly rows.
 
+        SECTOR-SCOPED superlatives ("which BANK had the highest net income",
+        "largest ENERGY company", "top TECH company by revenue") are answerable:
+        the companies table HAS an industry label in companies.sic_description.
+        Do NOT refuse these for lack of a sector column. Add a sic_description
+        ILIKE filter to the ranking:
+
+            SELECT c.name, c.ticker, fm.value AS net_income
+            FROM financial_metrics fm
+            JOIN companies c ON c.id = fm.company_id
+            WHERE fm.metric = 'net_income'
+              AND fm.fiscal_year = 2024 AND fm.fiscal_period = 'FY'
+              AND c.sic_description ILIKE '%bank%'
+            ORDER BY fm.value DESC
+            LIMIT 1;
+
+        Useful sector filters (see the sector/industry doc for the full list):
+        banks '%bank%'; energy/oil '%petroleum%'; tech '%software%' OR
+        '%computer%' OR '%semiconductor%'; pharma '%pharmaceutical%'; retail
+        '%retail%' OR '%stores%'. Finance broadly also includes
+        '%security brokers%'.
+
         When the ranking key is a COMPUTED ratio (highest net margin, highest
         debt ratio, fastest growth) rather than a raw stored value, a company
         missing an input produces a NULL key, and NULLs sort FIRST under DESC,
