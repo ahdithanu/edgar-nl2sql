@@ -95,19 +95,57 @@ def _get_anthropic_client() -> anthropic.Anthropic:
     return _anthropic_client
 
 
-def _call_claude(prompt: str, max_tokens: int) -> str:
-    """Single-turn Claude call; returns the concatenated text content."""
+def _call_claude(prompt: str, max_tokens: int, system: str | None = None) -> str:
+    """Single-turn Claude call; returns the concatenated text content.
+
+    `system` defaults to the SQL-analyst prompt; the document-QA path passes
+    its own so the model is grounded in filing excerpts, not the schema.
+    """
     settings = get_settings()
     response = _get_anthropic_client().messages.create(
         model=settings.claude_model,
         max_tokens=max_tokens,
-        system=_SYSTEM_PROMPT,
+        system=system if system is not None else _SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
     )
     # A message can contain multiple content blocks; keep only text ones.
     return "".join(
         block.text for block in response.content if getattr(block, "type", "") == "text"
     )
+
+
+_FILING_SYSTEM_PROMPT = """You answer questions about US public companies using ONLY the \
+provided excerpts from their 10-K filings (Risk Factors and MD&A sections).
+
+Rules:
+- Ground every claim in the excerpts. Do not use outside knowledge or invent facts.
+- Attribute what you say to the company and section, e.g. "In its Risk Factors, Apple \
+notes ...". The excerpts are labelled with the company and section.
+- If the excerpts do not contain enough to answer, say so plainly. Do not guess.
+- Be concise: a short paragraph, or a few bullet points for a list of risks. No preamble."""
+
+
+def answer_from_filings(question: str, chunks: list[ContextDoc]) -> str:
+    """Synthesize a grounded answer from retrieved 10-K excerpts.
+
+    Refuses (says the filings don't cover it) when no excerpts were retrieved,
+    rather than answering from the model's own knowledge. The excerpts are
+    labelled by company + section so the model can attribute claims.
+    """
+    if not chunks:
+        return (
+            "I don't have any 10-K filing text that addresses that. This system only "
+            "has the Risk Factors and MD&A sections of the loaded companies' latest 10-Ks."
+        )
+    excerpts = "\n\n".join(
+        f"[{d.title}]\n{d.content}" for d in chunks
+    )
+    prompt = (
+        f"Excerpts from 10-K filings:\n\n{excerpts}\n\n"
+        f"Question: {question}\n\n"
+        f"Answer using only these excerpts, attributing claims to the company and section."
+    )
+    return _call_claude(prompt, _SYNTHESIS_MAX_TOKENS, system=_FILING_SYSTEM_PROMPT).strip()
 
 
 def _extract_sql(text: str) -> str:

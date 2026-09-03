@@ -72,6 +72,31 @@ flowchart LR
     R --- E
 ```
 
+## Two paths: metrics (SQL) and 10-K text (document-RAG)
+
+The same `POST /query` answers two different kinds of question, and a router picks the path:
+
+- **Quantitative → text-to-SQL** (above): "What was Apple's revenue in 2023?", "Which bank
+  had the highest net income?" — answered from the structured `financial_metrics` table.
+- **Qualitative → document-RAG**: "What risks does Apple cite in its 10-K?", "How did
+  management explain the change?" — answered from real 10-K narrative text. A separate
+  loader (`scripts/load_filings.py`) fetches each company's latest 10-K from EDGAR,
+  extracts **Item 1A (Risk Factors)** and **Item 7 (MD&A)**, chunks and embeds them into a
+  `filing_chunks` table, and a separate retrieval path
+  ([`app/filing_retrieval.py`](app/filing_retrieval.py)) does cosine search over it —
+  scoped to the named company for precision. Claude then answers **grounded only in the
+  retrieved excerpts**, attributing each claim to the company and section, and says the
+  filings don't cover it rather than answering from its own knowledge.
+
+The router is a fast keyword heuristic (qualitative markers → document path), not an LLM
+call, so the common metric path stays cheap; a misroute degrades gracefully because the SQL
+path refuses cleanly when it can't answer. Load the filings with:
+
+```bash
+python scripts/load_filings.py               # latest 10-K for every loaded company
+python scripts/load_filings.py --tickers AAPL,JPM   # or a subset
+```
+
 ## Stack
 
 | Concern | Choice |

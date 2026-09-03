@@ -154,6 +154,50 @@ Belt *and* suspenders, because each layer covers the other's blind spots: the gu
 gives good error messages the retry loop can learn from; the read-only transaction is
 the guarantee that doesn't depend on our parsing being perfect.
 
+## The second path: document-RAG over 10-K text
+
+Metrics answer "how much"; they can't answer "why" or "what does management worry about."
+So there's a second retrieval path over real 10-K narrative — and it's where "RAG" means
+what people usually mean by it (retrieval over documents), rather than retrieval of schema
+context for SQL.
+
+**What's indexed, and the honest choices behind it.** For each company,
+`scripts/load_filings.py` fetches the latest 10-K from EDGAR and extracts two sections:
+Item 1A (Risk Factors) and Item 7 (MD&A). Those two carry nearly all the answerable
+qualitative content; the rest of a 10-K is financial statements (already in the metric
+table) and boilerplate. Section extraction is the hard part — filers format their "Item"
+headings inconsistently, and each item string appears several times (table of contents,
+cross-references, then the real body). The extractor takes every candidate start and keeps
+the one whose span to the next item boundary is *longest*, because a TOC entry is short and
+the actual section is large. That one heuristic is what makes it robust across hundreds of
+different filers; it still misses some, so the loader reports coverage rather than claiming
+100%.
+
+**Chunking.** ~800-token character windows with overlap, capped per section. The cap bounds
+the embedding volume across the whole universe and front-loads the most important
+discussion (Risk Factors and MD&A both lead with their summaries). This is a genuine
+tradeoff: a company with 400 KB of risk factors gets its first chunks indexed, not all of
+them. For a portfolio-scale corpus that's the right call; at production scale you'd index
+everything and lean on retrieval to rank.
+
+**Retrieval is scoped to the company.** "What are Apple's biggest risks" should not surface
+Microsoft's risk factors just because they embed similarly. When the question names a
+company, the cosine search is filtered to that company's chunks; otherwise it searches
+across all filings. Dense-only (pgvector cosine, HNSW), no BM25 or reranker — the honest
+limitation, and the place I'd add hybrid retrieval first.
+
+**Grounding and refusal.** Claude answers using *only* the retrieved excerpts, attributes
+each claim to the company and section, and — when the excerpts don't contain the answer —
+says so rather than falling back on its own training. The failure mode is the safe one:
+when retrieval comes up short, the system under-answers ("the filings don't cover that")
+instead of confabulating.
+
+**Routing.** A fast keyword heuristic sends qualitative questions (risk, strategy, "how did
+management…") to this path and everything else to SQL. Not an LLM call, because the metric
+path is the common case and shouldn't pay a routing tax on every request; and a misroute is
+cheap because the SQL path refuses cleanly when it can't answer. The response carries a
+`mode` field so a caller always knows which path answered.
+
 ## Evals gate CI
 
 The eval harness (`eval/`) is a golden set of ≥15 real questions. For each one we store

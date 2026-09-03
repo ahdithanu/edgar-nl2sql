@@ -207,6 +207,31 @@ def test_golden_item(item: dict) -> None:
             )
         return
 
+    if item.get("narrative"):
+        # Document-RAG path. Rather than pin exact prose (which varies run to
+        # run), verify the path did its job: it routed to the narrative mode,
+        # produced a non-trivial grounded answer, and cited the RIGHT company's
+        # 10-K (retrieval was correctly scoped). `contains` optionally requires
+        # a topical keyword the excerpts should support.
+        titles = " ".join(d.title for d in response.context_docs).upper()
+        want_kw = item.get("contains", [])
+        answer_l = response.answer.lower()
+        passed = (
+            response.mode == "narrative"
+            and response.success is True
+            and len(response.answer) > 60
+            and (item["company"].upper() in titles)
+            and all(k.lower() in answer_l for k in want_kw)
+        )
+        RESULTS[item["id"]] = passed
+        if not passed:
+            DIAGNOSTICS[item["id"]] = (
+                f"narrative check failed: mode={response.mode} success={response.success}\n"
+                f"      cited: {[d.title for d in response.context_docs[:3]]}\n"
+                f"      answer: {response.answer[:180]!r}"
+            )
+        return
+
     expected_rows = execute_readonly(item["reference_sql"])
     assert expected_rows, (
         f"reference_sql for {item['id']} returned no rows — the golden set "
