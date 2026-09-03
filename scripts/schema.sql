@@ -56,3 +56,25 @@ CREATE TABLE IF NOT EXISTS rag_documents (
 );
 CREATE INDEX IF NOT EXISTS idx_rag_documents_embedding
     ON rag_documents USING hnsw (embedding vector_cosine_ops);
+
+-- Document-RAG layer: chunked narrative text from 10-K filings (Item 1A Risk
+-- Factors and Item 7 MD&A), each with a voyage-3.5-lite embedding. A separate
+-- retrieval path (app/filing_retrieval.py) searches this table for qualitative
+-- questions, alongside the structured financial_metrics / text-to-SQL path.
+-- Loaded by scripts/load_filings.py.
+CREATE TABLE IF NOT EXISTS filing_chunks (
+    id            SERIAL PRIMARY KEY,
+    company_id    INT NOT NULL REFERENCES companies(id),
+    accession     TEXT NOT NULL,          -- SEC accession number of the 10-K
+    form          TEXT NOT NULL,          -- '10-K'
+    fiscal_year   INT,                    -- report fiscal year label
+    section       TEXT NOT NULL,          -- 'risk_factors' | 'mda'
+    chunk_index   INT NOT NULL,           -- order within (company, section)
+    content       TEXT NOT NULL,
+    embedding     VECTOR(1024) NOT NULL,
+    UNIQUE (company_id, accession, section, chunk_index)
+);
+CREATE INDEX IF NOT EXISTS idx_filing_chunks_embedding
+    ON filing_chunks USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_filing_chunks_company
+    ON filing_chunks (company_id, section);

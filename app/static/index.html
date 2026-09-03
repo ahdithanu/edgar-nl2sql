@@ -496,8 +496,39 @@ async function ask() {
     return;
   }
 
-  await replay(body);
+  if (body.mode === "narrative") await replayNarrative(body);
+  else await replay(body);
   btn.disabled = false; btn.textContent = "Run query";
+}
+
+// Narrative (10-K document-RAG) answers have no SQL and no retry loop, so they
+// get their own two-step animation: retrieve filing text, then synthesize a
+// cited answer. The SQL pane and result table are hidden; the citations render
+// in the context panel.
+async function replayNarrative(r) {
+  resetStages(); resetLog();
+  $("#output").hidden = true; $("#ctx-block").hidden = true; $("#diagnosing").hidden = true;
+  logLine("info", `POST /query · "${r.question}"`);
+  setStage(0, "active");
+  await wait(400);
+  setStage(0, "done");
+  logLine("info", `retrieved 10-K Risk Factors + MD&A via pgvector (${(r.context_docs || []).length} excerpts)`);
+  // generate/validate/execute don't apply to the document path
+  setStage(1, "idle"); setStage(2, "idle"); setStage(3, "idle");
+  setStage(4, "active");
+  await wait(500);
+  setStage(4, r.success ? "done" : "error");
+  logLine(r.success ? "success" : "info",
+    r.success ? "answer synthesized from 10-K filing text" : "no relevant filing text found");
+  // Answer + citations, no SQL / rows.
+  $("#output").hidden = false;
+  const answer = $("#answer");
+  answer.innerHTML = r.success ? highlightAnswer(r.answer || "") : esc(r.answer || "");
+  answer.className = r.success ? "" : "failed";
+  currentSql = "";
+  $("#sql-code").innerHTML = '<span class="cmt">-- answered from 10-K filing text (Risk Factors / MD&A), no SQL</span>';
+  $("#rows-table").innerHTML = "";
+  renderContext(r.context_docs || []);
 }
 
 // Replay the response's real attempt history through the stage pills + log,

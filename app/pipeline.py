@@ -43,7 +43,13 @@ from __future__ import annotations
 import time
 
 from app.db import execute_readonly
-from app.generation import UnanswerableQuestionError, generate_sql, synthesize_answer
+from app.filing_retrieval import resolve_company, retrieve_filing_chunks
+from app.generation import (
+    UnanswerableQuestionError,
+    answer_from_filings,
+    generate_sql,
+    synthesize_answer,
+)
 from app.logging_config import get_logger
 from app.models import ContextDoc, QueryResponse, SQLAttempt
 from app.retrieval import retrieve_context
@@ -107,11 +113,85 @@ def _failure_narrative(question: str, attempts: list[SQLAttempt]) -> str:
     return " ".join(lines)
 
 
-def run_pipeline(question: str, request_id: str) -> QueryResponse:
-    """Answer a natural-language question with SQL over the EDGAR database.
+# Qualitative markers that route a question to the 10-K document path instead
+# of text-to-SQL. Deliberately a fast heuristic, not an LLM call: the metric
+# path is the common case and must stay cheap. The markers are things you can
+# only answer from filing prose (risks, strategy, management's explanation),
+# never from the five numeric metrics. A question with none of these defaults
+# to SQL, which is the safe default (the SQL path refuses cleanly if it can't
+# answer, so a misroute degrades gracefully).
+_NARRATIVE_MARKERS = (
+    "risk", "risks", "risk factor", "why", "how did", "how does", "explain",
+    "explanation", "discuss", "strategy", "strategic", "outlook", "guidance",
+    "management", "competition", "competitive", "litigation", "lawsuit",
+    "regulat", "supply chain", "cite", "cited", "mention", "describe",
+    "challenge", "headwind", "tailwind", "uncertaint", "concern",
+)
 
-    Never raises: all failures are folded into the QueryResponse.
+
+def _is_narrative(question: str) -> bool:
+    q = question.lower()
+    return any(m in q for m in _NARRATIVE_MARKERS)
+
+
+def _run_narrative(question: str, request_id: str) -> QueryResponse:
+    """Answer a qualitative question from 10-K Risk Factors / MD&A text.
+
+    Retrieve the most relevant filing chunks (scoped to the named company when
+    there is one), then synthesize an answer grounded ONLY in those excerpts,
+    with the excerpts returned as context_docs so the citations are visible.
+    Never raises.
     """
+    try:
+        company_id, ticker = resolve_company(question)
+        chunks = retrieve_filing_chunks(question, company_id=company_id)
+        answer = answer_from_filings(question, chunks)
+        logger.info(
+            "narrative_answer",
+            request_id=request_id,
+            company=ticker,
+            n_chunks=len(chunks),
+            top_similarity=chunks[0].similarity if chunks else None,
+        )
+        return QueryResponse(
+            request_id=request_id,
+            question=question,
+            success=bool(chunks),
+            mode="narrative",
+            sql=None,
+            rows=[],
+            answer=answer,
+            attempts=[],
+            context_docs=chunks,
+        )
+    except Exception as exc:  # noqa: BLE001 — pipeline must never raise
+        logger.error("narrative_failed", request_id=request_id, error=str(exc))
+        return QueryResponse(
+            request_id=request_id,
+            question=question,
+            success=False,
+            mode="narrative",
+            sql=None,
+            rows=[],
+            answer=(
+                "I couldn't retrieve the 10-K filing text to answer that. "
+                "The document search is temporarily unavailable."
+            ),
+            attempts=[],
+            context_docs=[],
+        )
+
+
+def run_pipeline(question: str, request_id: str) -> QueryResponse:
+    """Answer a natural-language question, routing between two paths.
+
+    A qualitative question (risks, strategy, management's discussion) goes to
+    the 10-K document-RAG path; everything else is text-to-SQL over the metric
+    table. Never raises: all failures are folded into the QueryResponse.
+    """
+    if _is_narrative(question):
+        return _run_narrative(question, request_id)
+
     # ------------------------------------------------------------------
     # STEP 1 — RETRIEVAL, BEFORE ANY GENERATION.
     # The retrieved docs ground everything that follows; without them the

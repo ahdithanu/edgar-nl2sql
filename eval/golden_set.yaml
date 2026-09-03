@@ -255,3 +255,18 @@
 - id: nonsense_question
   question: "What was the average rainfall in Mordor during the Third Age?"
   expect_failure: true
+
+# --- document-RAG (10-K narrative) path ---------------------------------------
+# These exercise the second retrieval path (filing_chunks), not text-to-SQL.
+# The harness checks routing (mode=narrative), a grounded non-empty answer, and
+# that the citation is the RIGHT company's 10-K; `contains` requires a topical
+# term the excerpts support. Exact prose is not pinned (it varies per run).
+- id: narrative_apple_risks
+  question: "What are the main risks Apple highlights in its 10-K?"
+  narrative: true
+  company: AAPL
+- id: narrative_nvidia_competition
+  question: "How does NVIDIA describe its competition in its filing?"
+  narrative: true
+  company: NVDA
+  contains: ["compet"]

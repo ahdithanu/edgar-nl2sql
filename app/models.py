@@ -63,15 +63,20 @@ class QueryResponse(BaseModel):
     request_id: str
     question: str
     success: bool
+    # Which path answered: "sql" (text-to-SQL over financial_metrics) or
+    # "narrative" (document-RAG over 10-K Risk Factors / MD&A text).
+    mode: Literal["sql", "narrative"] = "sql"
     # Final successful SQL. None when all attempts failed — `attempts` still holds
-    # every SQL string that was tried, so nothing is hidden.
+    # every SQL string that was tried, so nothing is hidden. Always None in narrative mode.
     sql: str | None
     rows: list[dict] = []
-    # Plain-English answer grounded in `rows`, OR (on failure) a clear explanation of
-    # what was tried and why it didn't work. Never empty.
+    # Plain-English answer grounded in `rows` (sql mode) or in the retrieved filing
+    # excerpts (narrative mode), OR (on failure) a clear explanation. Never empty.
     answer: str
     attempts: list[SQLAttempt]
-    context_docs: list[ContextDoc] = []  # what retrieval injected (transparency/demo value)
+    # In sql mode: the schema/glossary docs injected into generation. In narrative
+    # mode: the 10-K excerpts the answer was grounded in (the citations).
+    context_docs: list[ContextDoc] = []
 
 
 class HealthResponse(BaseModel):

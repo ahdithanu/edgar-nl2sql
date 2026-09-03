@@ -192,3 +192,9 @@
 - id: h_out_of_schema_apple_rnd_2023
   question: "How much did Apple spend on research and development in fiscal 2023?"
   expect_failure: true
+
+# Document-RAG path, held out: a fresh company and phrasing not used in tuning.
+- id: h_narrative_amazon_risks
+  question: "What risk factors does Amazon emphasize in its latest annual report?"
+  narrative: true
+  company: AMZN
