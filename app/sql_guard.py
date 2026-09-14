@@ -84,7 +84,13 @@ _FORBIDDEN_NODES: tuple[type[exp.Expression], ...] = tuple(
 # prevents "schema snooping" — the model should learn the schema from the
 # retrieved RAG context, not by introspecting the catalog (which would also
 # leak infrastructure details in a multi-tenant database like Supabase).
-_BLOCKED_SCHEMAS = frozenset({"pg_catalog", "information_schema"})
+#
+# `app_meta` is the control plane (credential hashes + the audit log). It must
+# be unreachable by generated SQL: a prompt-injection question must never be
+# able to read api_keys or touch audit_log. This static block is one layer;
+# execution is READ ONLY (so audit rows can't be written) and a hardened
+# deployment also denies the data-plane role any grant on app_meta.
+_BLOCKED_SCHEMAS = frozenset({"pg_catalog", "information_schema", "app_meta"})
 _BLOCKED_TABLE_PREFIX = "pg_"
 
 # Dangerous function calls. Node-type and table checks don't see these: a
