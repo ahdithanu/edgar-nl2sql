@@ -41,7 +41,7 @@ CONTEXT_DOCS: list[dict] = [
         "table_schema",
         "companies table schema",
         """
-        Table `companies`, one row per SEC-registered company (25 rows total).
+        Table `companies`, one row per SEC-registered company (478 rows total).
 
         CREATE TABLE companies (
             id               SERIAL PRIMARY KEY,
@@ -278,7 +278,7 @@ CONTEXT_DOCS: list[dict] = [
 
         These ARE answerable. companies.sic_description holds an SEC industry
         label for every company in the database, there is no separate sector
-        table, but the column is populated for all 25 companies, so never
+        table, but the column is populated for all 478 companies, so never
         answer that industry information is unavailable.
 
         WHY THIS DOC EXISTS: questions like "average revenue growth across all
@@ -762,11 +762,13 @@ CONTEXT_DOCS: list[dict] = [
     ),
     _doc(
         "glossary",
-        "companies covered: the 25 tickers in this database",
+        "companies covered: 478 companies, with the most-asked tickers listed",
         """
-        Exactly 25 large-cap US companies are covered. Questions about any
-        other company (e.g. Intel, Berkshire, Oracle) cannot be answered,
-        say so rather than guessing a substitute.
+        478 US companies are covered, spanning 153 SIC industry labels.
+        The tickers below are the most frequently asked, NOT the full list:
+        check the table before concluding a company is absent, e.g.
+            SELECT ticker, name FROM companies WHERE name ILIKE '%oracle%';
+        Only say a company is not covered when such a lookup returns nothing.
 
         Tech: AAPL (Apple), MSFT (Microsoft), GOOGL (Alphabet/Google),
         AMZN (Amazon), NVDA (NVIDIA), META (Meta/Facebook), TSLA (Tesla),
@@ -780,7 +782,9 @@ CONTEXT_DOCS: list[dict] = [
         UNH (UnitedHealth Group).
 
         "FAANG", "big tech", "banks" style groupings should be translated to
-        explicit ticker lists with c.ticker IN (...).
+        explicit ticker lists with c.ticker IN (...), or, when the group is
+        broader than the tickers listed above, to a sic_description ILIKE
+        filter so companies outside this list are still included.
         """,
     ),
     _doc(
