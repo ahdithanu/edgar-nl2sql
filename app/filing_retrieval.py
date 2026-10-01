@@ -24,6 +24,25 @@ logger = get_logger(__name__)
 _SECTION_LABEL = {"risk_factors": "Risk Factors", "mda": "MD&A"}
 
 
+def _describe_chunk(
+    form: str, ticker: str, section: str, fiscal_year: int | None
+) -> tuple[str, str]:
+    """Return (doc_type, citation title) for a narrative chunk.
+
+    One retrieval path serves two document kinds, so the citation is derived
+    from `form`: a 10-K section keeps its exact historical title
+    ("AAPL 10-K Risk Factors FY2024"), while an earnings-call chunk reads
+    "AAPL Earnings Call Q1 FY2024". doc_type lets a reader tell the sources
+    apart in the response (filing:* vs transcript:*).
+    """
+    fy = f" FY{fiscal_year}" if fiscal_year else ""
+    if form == "earnings_call":
+        quarter = section.rsplit("_", 1)[-1].upper()  # 'earnings_q1' -> 'Q1'
+        return f"transcript:{section}", f"{ticker} Earnings Call {quarter}{fy}"
+    label = _SECTION_LABEL.get(section, section)
+    return f"filing:{section}", f"{ticker} 10-K {label}{fy}"
+
+
 def retrieve_filing_chunks(
     question: str, company_id: int | None = None, k: int = 6
 ) -> list[ContextDoc]:
@@ -39,6 +58,7 @@ def retrieve_filing_chunks(
 
     query = """
         SELECT c.ticker,
+               fc.form,
                fc.section,
                fc.accession,
                fc.fiscal_year,
@@ -65,12 +85,13 @@ def retrieve_filing_chunks(
     docs: list[ContextDoc] = []
     for row in rows:
         r = row if isinstance(row, dict) else dict(zip(columns, row))
-        label = _SECTION_LABEL.get(r["section"], r["section"])
-        fy = f" FY{r['fiscal_year']}" if r.get("fiscal_year") else ""
+        doc_type, title = _describe_chunk(
+            r.get("form") or "10-K", r["ticker"], r["section"], r.get("fiscal_year")
+        )
         docs.append(
             ContextDoc(
-                doc_type=f"filing:{r['section']}",
-                title=f"{r['ticker']} 10-K {label}{fy}",
+                doc_type=doc_type,
+                title=title,
                 content=r["content"],
                 similarity=float(r["similarity"]),
             )
