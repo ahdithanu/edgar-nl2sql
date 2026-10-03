@@ -1,11 +1,18 @@
 """Load earnings-call transcripts into filing_chunks (document-RAG path).
 
 Sibling to scripts/load_filings.py. Where that loader pulls 10-K Risk Factors +
-MD&A from SEC EDGAR, this one pulls earnings-call transcripts from Financial
-Modeling Prep (FMP), chunks them, embeds them with Voyage, and stores them in
-the SAME filing_chunks table so the existing document-RAG retrieval
-(app/filing_retrieval.py) can answer questions like "what did Apple's management
-say about margins on the last call?" with no retrieval changes.
+MD&A from SEC EDGAR, this one pulls earnings-call transcripts, chunks them,
+embeds them with Voyage, and stores them in the SAME filing_chunks table so the
+existing document-RAG retrieval (app/filing_retrieval.py) can answer questions
+like "what did Apple's management say about margins on the last call?" with no
+retrieval changes.
+
+Two sources (--source), same downstream path:
+  * alphavantage (default) — EARNINGS_CALL_TRANSCRIPT; works on the free tier
+    (rate-limited: 5 req/min, 25 req/day), so pass --sleep for the free tier and
+    give explicit --years/--quarters (it has no "available dates" endpoint).
+  * fmp — Financial Modeling Prep; richer discovery (--last N most recent calls)
+    but the transcript endpoint needs an Ultimate+ plan.
 
 WHY reuse filing_chunks instead of a new table: a transcript is just more
 narrative text about a company, retrieved the same way as a 10-K section. One
@@ -50,6 +57,10 @@ from app.config import get_settings  # noqa: E402
 FMP_BASE = "https://financialmodelingprep.com"
 TRANSCRIPT_PATH = "/api/v3/earning_call_transcript/{symbol}"           # ?year=&quarter=
 TRANSCRIPT_DATES_PATH = "/api/v4/earning_call_transcript?symbol={symbol}"  # list of [q, year, date]
+
+# Alpha Vantage: a single query endpoint, function + quarter like "2024Q1".
+AV_BASE = "https://www.alphavantage.co/query"
+
 MIN_REQUEST_INTERVAL_S = 0.2
 MAX_RETRIES = 5
 
@@ -136,6 +147,70 @@ def normalize_available_dates(payload: object) -> list[tuple[int, int]]:
     return sorted(set(out), key=lambda yq: (yq[0], yq[1]), reverse=True)
 
 
+def parse_av_quarter(qstr: str) -> tuple[int | None, int | None]:
+    """Alpha Vantage quarter label 'YYYYQn' -> (year, quarter)."""
+    m = re.match(r"\s*(\d{4})\s*[Qq]\s*([1-4])", qstr or "")
+    return (int(m.group(1)), int(m.group(2))) if m else (None, None)
+
+
+def normalize_alphavantage(payload: object) -> dict | None:
+    """Normalize an Alpha Vantage EARNINGS_CALL_TRANSCRIPT response.
+
+    Shape: {"symbol","quarter":"2024Q1","transcript":[{speaker,title,content,
+    sentiment}, ...]}. We join the speaker segments into one attributed text
+    block ("Speaker, Title: ...") so the chunks keep who-said-what, which is
+    exactly the grounding a qualitative answer needs. Returns None if the
+    response carries no transcript (missing symbol/quarter, or a rate-limit
+    note instead of data).
+    """
+    if not isinstance(payload, dict):
+        return None
+    segments = payload.get("transcript")
+    if not isinstance(segments, list) or not segments:
+        return None
+
+    parts: list[str] = []
+    for seg in segments:
+        if not isinstance(seg, dict):
+            continue
+        content = (seg.get("content") or "").strip()
+        if not content:
+            continue
+        speaker = (seg.get("speaker") or "").strip()
+        title = (seg.get("title") or "").strip()
+        who = f"{speaker}, {title}" if speaker and title else (speaker or title)
+        parts.append(f"{who}: {content}" if who else content)
+
+    text = "\n\n".join(parts).strip()
+    if not text:
+        return None
+
+    year, quarter = parse_av_quarter(str(payload.get("quarter", "")))
+    return {"year": year, "quarter": quarter, "date": None, "content": text}
+
+
+def recent_quarters(n: int, today=None) -> list[tuple[int, int]]:
+    """The n most recent *completed* quarters as (year, quarter), newest first.
+
+    Used as the default target set for Alpha Vantage, which has no
+    available-dates endpoint. Starts one quarter back from the current one
+    (the in-progress quarter has no call yet); genuinely missing quarters are
+    simply skipped downstream when the API returns no transcript.
+    """
+    import datetime as _dt
+
+    today = today or _dt.date.today()
+    q = (today.month - 1) // 3 + 1  # current quarter (in progress)
+    year, quarter = today.year, q
+    out: list[tuple[int, int]] = []
+    for _ in range(n):
+        quarter -= 1
+        if quarter == 0:
+            quarter, year = 4, year - 1
+        out.append((year, quarter))
+    return out
+
+
 def chunk_transcript(text: str) -> list[str]:
     """Overlapping character-window chunks, capped per call."""
     text = re.sub(r"\s+", " ", text).strip()
@@ -200,6 +275,69 @@ class FMPClient:
         return normalize_transcript(self._get(url))
 
 
+class RateLimited(Exception):
+    """The transcript API returned a throttling notice instead of data."""
+
+
+class AlphaVantageClient:
+    """Alpha Vantage EARNINGS_CALL_TRANSCRIPT client.
+
+    Free tier is 5 req/min and 25 req/day, so `min_interval` defaults high;
+    pass --sleep to tune. A throttle notice comes back as a 200 with an
+    "Information"/"Note" key (not an HTTP error), so we detect it and raise
+    RateLimited rather than silently storing nothing.
+    """
+
+    def __init__(self, api_key: str, min_interval: float = 1.0) -> None:
+        if not api_key:
+            raise SystemExit(
+                "ALPHAVANTAGE_API_KEY is not set. Add it to your environment "
+                "(or .env) and re-run."
+            )
+        self._key = api_key
+        self._client = httpx.Client(timeout=60)
+        self._last = 0.0
+        self._min_interval = min_interval
+
+    def _throttle(self) -> None:
+        elapsed = time.monotonic() - self._last
+        if elapsed < self._min_interval:
+            time.sleep(self._min_interval - elapsed)
+        self._last = time.monotonic()
+
+    def transcript(self, symbol: str, year: int, quarter: int) -> dict | None:
+        params = {
+            "function": "EARNINGS_CALL_TRANSCRIPT",
+            "symbol": symbol,
+            "quarter": f"{year}Q{quarter}",
+            "apikey": self._key,
+        }
+        last_error: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            self._throttle()
+            try:
+                resp = self._client.get(AV_BASE, params=params)
+                if resp.status_code >= 500:
+                    raise httpx.HTTPStatusError("retryable", request=resp.request, response=resp)
+                resp.raise_for_status()
+                payload = resp.json()
+                if isinstance(payload, dict) and (
+                    "Information" in payload or "Note" in payload or "Error Message" in payload
+                ):
+                    raise RateLimited(
+                        payload.get("Information")
+                        or payload.get("Note")
+                        or payload.get("Error Message")
+                    )
+                return normalize_alphavantage(payload)
+            except RateLimited:
+                raise  # surface immediately; retrying won't help within the window
+            except Exception as exc:  # noqa: BLE001 — retry transient network errors
+                last_error = exc
+                time.sleep(2**attempt)
+        raise RuntimeError(f"GET failed after {MAX_RETRIES} tries: {symbol} {year}Q{quarter}: {last_error}")
+
+
 # --------------------------------------------------------------------------- #
 # DB helpers + orchestration
 # --------------------------------------------------------------------------- #
@@ -235,13 +373,16 @@ def existing_accessions(conn: psycopg.Connection) -> set[str]:
 
 
 def _targets(
-    client: FMPClient, ticker: str, years: list[int] | None,
+    client, source: str, ticker: str, years: list[int] | None,
     quarters: list[int] | None, last_n: int,
 ) -> list[tuple[int, int]]:
     """Resolve which (year, quarter) calls to load for one company."""
     if years and quarters:
         return [(y, q) for y in years for q in quarters]
-    return client.available(ticker)[:last_n]
+    if source == "fmp":
+        return client.available(ticker)[:last_n]
+    # Alpha Vantage has no available-dates endpoint: default to recent quarters.
+    return recent_quarters(last_n)
 
 
 def main() -> int:
@@ -252,6 +393,10 @@ def main() -> int:
     parser.add_argument("--quarters", help="Comma-separated quarters 1-4 (with --years)")
     parser.add_argument("--last", type=int, default=DEFAULT_LAST_N,
                         help=f"Most recent N calls per company when years/quarters omitted (default {DEFAULT_LAST_N})")
+    parser.add_argument("--source", choices=("alphavantage", "fmp"), default="alphavantage",
+                        help="Transcript provider (default: alphavantage)")
+    parser.add_argument("--sleep", type=float, default=1.0,
+                        help="Seconds between API calls (Alpha Vantage free tier needs ~13)")
     parser.add_argument("--dry-run", action="store_true", help="Fetch + parse, write nothing")
     parser.add_argument("--force", action="store_true", help="Reload transcripts already present")
     args = parser.parse_args()
@@ -261,7 +406,10 @@ def main() -> int:
     years = [int(y) for y in args.years.split(",")] if args.years else None
     quarters = [int(q) for q in args.quarters.split(",")] if args.quarters else None
 
-    client = FMPClient(settings.fmp_api_key)
+    if args.source == "fmp":
+        client = FMPClient(settings.fmp_api_key)
+    else:
+        client = AlphaVantageClient(settings.alphavantage_api_key, min_interval=args.sleep)
 
     with psycopg.connect(settings.database_url) as conn:
         companies = db_companies(conn, tickers, args.limit)
@@ -273,7 +421,11 @@ def main() -> int:
     calls = skipped = failed = 0
     for company_id, ticker in companies:
         try:
-            targets = _targets(client, ticker, years, quarters, args.last)
+            targets = _targets(client, args.source, ticker, years, quarters, args.last)
+        except RateLimited as exc:
+            print(f"\nRate limit hit ({exc}). Stopping so the daily quota isn't burned.",
+                  file=sys.stderr)
+            break
         except Exception as exc:  # noqa: BLE001 — one company must not sink the run
             print(f"  {ticker}: date lookup FAILED ({exc})", file=sys.stderr)
             failed += 1
@@ -286,6 +438,11 @@ def main() -> int:
                 continue
             try:
                 record = client.transcript(ticker, year, quarter)
+            except RateLimited as exc:
+                print(f"\nRate limit hit at {acc} ({exc}). Stopping so the daily "
+                      f"quota isn't burned; re-run later to continue.", file=sys.stderr)
+                _print_summary(calls, skipped, failed)
+                return 0
             except Exception as exc:  # noqa: BLE001
                 print(f"  {acc}: FETCH FAILED ({exc})", file=sys.stderr)
                 failed += 1
@@ -320,8 +477,12 @@ def main() -> int:
                 print(f"  {acc}: WRITE FAILED ({exc})", file=sys.stderr)
                 failed += 1
 
-    print(f"\nLoaded {calls} transcripts, skipped {skipped} already-present, failed {failed}")
+    _print_summary(calls, skipped, failed)
     return 0
+
+
+def _print_summary(calls: int, skipped: int, failed: int) -> None:
+    print(f"\nLoaded {calls} transcripts, skipped {skipped} already-present, failed {failed}")
 
 
 if __name__ == "__main__":

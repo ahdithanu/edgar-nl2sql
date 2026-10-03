@@ -89,3 +89,42 @@ def test_chunk_transcript_short_text_single_chunk():
 
 def test_chunk_transcript_empty():
     assert lt.chunk_transcript("   ") == []
+
+
+# --- Alpha Vantage parsing --------------------------------------------------
+
+
+def test_parse_av_quarter():
+    assert lt.parse_av_quarter("2024Q1") == (2024, 1)
+    assert lt.parse_av_quarter("2023q4") == (2023, 4)
+    assert lt.parse_av_quarter("garbage") == (None, None)
+
+
+def test_normalize_alphavantage_joins_attributed_segments():
+    payload = {
+        "symbol": "IBM",
+        "quarter": "2024Q1",
+        "transcript": [
+            {"speaker": "Jane Doe", "title": "CEO", "content": "Revenue grew.", "sentiment": "0.8"},
+            {"speaker": "John Roe", "title": "CFO", "content": "Margins held.", "sentiment": "0.6"},
+        ],
+    }
+    out = lt.normalize_alphavantage(payload)
+    assert out["year"] == 2024 and out["quarter"] == 1
+    assert "Jane Doe, CEO: Revenue grew." in out["content"]
+    assert "John Roe, CFO: Margins held." in out["content"]
+
+
+def test_normalize_alphavantage_empty_or_missing_transcript_is_none():
+    assert lt.normalize_alphavantage({"symbol": "IBM", "quarter": "2024Q1"}) is None
+    assert lt.normalize_alphavantage({"transcript": []}) is None
+    assert lt.normalize_alphavantage({"Information": "rate limited"}) is None
+    assert lt.normalize_alphavantage("nope") is None
+
+
+def test_recent_quarters_counts_back_from_current():
+    import datetime as dt
+
+    # Oct 2026 -> current quarter Q4 (in progress); most recent completed is Q3.
+    out = lt.recent_quarters(4, today=dt.date(2026, 10, 3))
+    assert out == [(2026, 3), (2026, 2), (2026, 1), (2025, 4)]

@@ -32,10 +32,12 @@ class Settings(BaseSettings):
     database_url: str  # Supabase pooler URL; required — no safe default exists
     anthropic_api_key: str = ""
     voyage_api_key: str = ""
-    # Financial Modeling Prep API key — used ONLY by scripts/load_transcripts.py
-    # to backfill earnings-call transcripts. Not needed at runtime; the app reads
-    # transcripts from the DB like any other filing_chunks. Requires an FMP plan
-    # tier that includes the earnings-call-transcript endpoint (Ultimate+).
+    # Earnings-transcript source keys — used ONLY by scripts/load_transcripts.py
+    # to backfill transcripts. Neither is needed at runtime; the app reads
+    # transcripts from the DB like any other filing_chunks. Alpha Vantage
+    # (EARNINGS_CALL_TRANSCRIPT) works on the free tier; FMP's endpoint needs an
+    # Ultimate+ plan. The loader's --source flag picks which to use.
+    alphavantage_api_key: str = ""
     fmp_api_key: str = ""
 
     # --- model selection ---
@@ -53,6 +55,7 @@ class Settings(BaseSettings):
         "database_url",
         "anthropic_api_key",
         "voyage_api_key",
+        "alphavantage_api_key",
         "fmp_api_key",
         "query_api_key",
         "claude_model",
