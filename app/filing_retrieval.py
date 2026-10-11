@@ -108,38 +108,37 @@ def retrieve_filing_chunks(
     return docs
 
 
-def resolve_company(question: str) -> tuple[int | None, str | None]:
-    """Best-effort map a question to a single company_id + ticker.
+def _match_company(
+    question: str, companies: list[dict]
+) -> tuple[int | None, str | None]:
+    """Pure matcher: map a question to a single (company_id, ticker) or (None, None).
 
-    Matches an uppercase ticker token first (exact), then a company-name
-    substring. Returns (None, None) when the question names no company or
-    names several, in which case retrieval searches across all filings.
+    Order:
+      1. A ticker written as an uppercase whole word in the ORIGINAL question
+         ("AAPL", "NVDA"). Case-SENSITIVE on purpose: tickers are conventionally
+         uppercase, and a case-insensitive match makes short tickers collide with
+         ordinary words — "ON" (ON Semiconductor) would match the word "on",
+         "IT", "ALL", "KEY" likewise. Requiring the uppercase form kills that
+         whole class of false positives while still catching how people actually
+         write tickers.
+      2. Otherwise, the distinctive first word of a company name ("apple" from
+         "Apple Inc.", "nvidia" from "NVIDIA CORP"), matched case-insensitively.
+
+    Returns (None, None) when zero or several companies match, so retrieval then
+    searches across all filings rather than guessing one.
     """
     import re
 
-    with get_pool().connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id, ticker, name FROM companies")
-            raw = cur.fetchall()
-
-    rows = [
-        r if isinstance(r, dict) else {"id": r[0], "ticker": r[1], "name": r[2]}
-        for r in raw
-    ]
-    q_upper = question.upper()
-    q_lower = question.lower()
-
-    # 1) exact ticker as a whole word
     ticker_hits = [
-        c for c in rows if re.search(rf"\b{re.escape(c['ticker'])}\b", q_upper)
+        c for c in companies
+        if re.search(rf"\b{re.escape(c['ticker'])}\b", question)  # case-sensitive
     ]
     if len(ticker_hits) == 1:
         return ticker_hits[0]["id"], ticker_hits[0]["ticker"]
 
-    # 2) company-name match: compare the distinctive first word of the name
-    #    (e.g. "apple" from "Apple Inc.", "jpmorgan" from "JPMORGAN CHASE & CO")
+    q_lower = question.lower()
     name_hits = []
-    for c in rows:
+    for c in companies:
         head = re.sub(r"[^a-z]", "", c["name"].split()[0].lower())
         if len(head) >= 4 and head in q_lower:
             name_hits.append(c)
@@ -147,3 +146,22 @@ def resolve_company(question: str) -> tuple[int | None, str | None]:
         return name_hits[0]["id"], name_hits[0]["ticker"]
 
     return None, None
+
+
+def resolve_company(question: str) -> tuple[int | None, str | None]:
+    """Best-effort map a question to a single company_id + ticker.
+
+    Fetches the company list and delegates to _match_company. Returns
+    (None, None) when the question names no company or names several, in which
+    case retrieval searches across all filings.
+    """
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, ticker, name FROM companies")
+            raw = cur.fetchall()
+
+    companies = [
+        r if isinstance(r, dict) else {"id": r[0], "ticker": r[1], "name": r[2]}
+        for r in raw
+    ]
+    return _match_company(question, companies)
