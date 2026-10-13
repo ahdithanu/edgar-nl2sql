@@ -30,6 +30,12 @@ class Settings(BaseSettings):
 
     # --- external services ---
     database_url: str  # Supabase pooler URL; required — no safe default exists
+    # Control-plane DSN for the credential store + audit log (schema app_meta).
+    # Optional: falls back to database_url when unset (see control_dsn). In a
+    # hardened deployment this is a SEPARATE least-privileged role (edgar_ctl)
+    # that can touch app_meta but NOT the public data tables, so the data-plane
+    # role that runs LLM-generated SQL can never reach credentials or audit rows.
+    control_database_url: str = ""
     anthropic_api_key: str = ""
     voyage_api_key: str = ""
 
@@ -41,11 +47,26 @@ class Settings(BaseSettings):
     # POST /query is expensive per call (1 Voyage embed + up to 3 Claude
     # generations + synthesis) and holds a pooled DB connection, so it must
     # not be an unauthenticated, unmetered cost sink when exposed publicly.
-    query_api_key: str = ""  # if set, POST /query requires a matching X-API-Key header
-    rate_limit_per_minute: int = 30  # per-client-IP cap on POST /query; 0 disables
+    query_api_key: str = ""  # LEGACY single shared secret; superseded by the
+    # app_meta.api_keys table (see app/auth.py). Still honored for backward
+    # compatibility: a request whose X-API-Key matches is accepted as the
+    # "legacy" principal. Leave unset once real keys are provisioned.
+    rate_limit_per_minute: int = 30  # default per-principal cap on POST /query; 0 disables
+
+    # --- authentication / access ---
+    # When True, a /query request with NO (or an unrecognized) API key is served
+    # as the built-in "anonymous" principal instead of being rejected with 401.
+    # This is what keeps the PUBLIC demo working. Secure-by-default is OFF: a
+    # deployment must explicitly opt in to unauthenticated access.
+    anonymous_principal_enabled: bool = False
+    anonymous_rate_limit_per_minute: int = 5  # tight cap for the anonymous principal
+    # Append a tamper-evident row to app_meta.audit_log for every /query. Never
+    # fails the request — an audit-write error is logged, not surfaced.
+    audit_enabled: bool = True
 
     @field_validator(
         "database_url",
+        "control_database_url",
         "anthropic_api_key",
         "voyage_api_key",
         "query_api_key",
@@ -75,6 +96,16 @@ class Settings(BaseSettings):
 
     # --- observability ---
     log_level: str = "INFO"
+
+    @property
+    def control_dsn(self) -> str:
+        """DSN for the control plane (credential store + audit log).
+
+        Falls back to the data-plane DSN when control_database_url is unset, so
+        a single-role deployment works out of the box. Set control_database_url
+        to a dedicated least-privileged role to fully isolate the planes.
+        """
+        return self.control_database_url or self.database_url
 
 
 @lru_cache

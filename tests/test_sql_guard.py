@@ -128,6 +128,21 @@ def test_rejects_system_catalog_access(sql: str) -> None:
         validate_sql(sql)
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT key_hash FROM app_meta.api_keys",
+        "SELECT * FROM app_meta.audit_log",
+        "SELECT k.key_hash FROM companies c JOIN app_meta.api_keys k ON true",
+    ],
+)
+def test_rejects_control_plane_access(sql: str) -> None:
+    # The control plane (credential hashes + audit log) must be unreachable by
+    # LLM-generated SQL, even via a join or subquery.
+    with pytest.raises(SQLGuardError):
+        validate_sql(sql)
+
+
 def test_rejects_set_statement() -> None:
     # SET could undo the statement_timeout that db.py installs.
     with pytest.raises(SQLGuardError):
