@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS filing_chunks (
     chunk_index   INT NOT NULL,           -- order within (company, section)
     content       TEXT NOT NULL,
     embedding     VECTOR(1024) NOT NULL,
+    loaded_at     TIMESTAMPTZ NOT NULL DEFAULT now(),  -- when this chunk was (re)loaded; set on insert
     UNIQUE (company_id, accession, section, chunk_index)
 );
 CREATE INDEX IF NOT EXISTS idx_filing_chunks_embedding
