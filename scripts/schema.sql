@@ -79,3 +79,5 @@ CREATE INDEX IF NOT EXISTS idx_filing_chunks_embedding
     ON filing_chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS idx_filing_chunks_company
     ON filing_chunks (company_id, section);
+CREATE INDEX IF NOT EXISTS idx_filing_chunks_loaded_at
+    ON filing_chunks (loaded_at DESC);
