@@ -24,9 +24,11 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 import anthropic
 
+from app import metrics
 from app.config import get_settings
 from app.logging_config import get_logger
 from app.models import ContextDoc, SQLAttempt
@@ -102,12 +104,23 @@ def _call_claude(prompt: str, max_tokens: int, system: str | None = None) -> str
     its own so the model is grounded in filing excerpts, not the schema.
     """
     settings = get_settings()
+    started = time.monotonic()
     response = _get_anthropic_client().messages.create(
         model=settings.claude_model,
         max_tokens=max_tokens,
         system=system if system is not None else _SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
     )
+    # Record token usage + wall time for cost/latency accounting (no-op outside
+    # a request context, e.g. in offline scripts).
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        metrics.record_llm(
+            settings.claude_model,
+            getattr(usage, "input_tokens", 0) or 0,
+            getattr(usage, "output_tokens", 0) or 0,
+            int((time.monotonic() - started) * 1000),
+        )
     # A message can contain multiple content blocks; keep only text ones.
     return "".join(
         block.text for block in response.content if getattr(block, "type", "") == "text"

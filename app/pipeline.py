@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import time
 
+from app import metrics
 from app.db import execute_readonly
 from app.filing_retrieval import resolve_company, retrieve_filing_chunks
 from app.generation import (
@@ -183,6 +184,24 @@ def _run_narrative(question: str, request_id: str) -> QueryResponse:
 
 
 def run_pipeline(question: str, request_id: str) -> QueryResponse:
+    """Answer a question, with per-request latency + token/cost accounting.
+
+    Thin wrapper over _run_pipeline_inner: it starts a metrics accumulator
+    (which generation.py and retrieval.py record into), times the whole request,
+    and emits one `query_metrics` structured-log event — the data behind p50/p95
+    latency and $/query. Never raises (the inner function is non-raising; the
+    accounting is best-effort and must not change that contract).
+    """
+    m = metrics.start_metrics()
+    started = time.monotonic()
+    try:
+        return _run_pipeline_inner(question, request_id)
+    finally:
+        m.total_ms = int((time.monotonic() - started) * 1000)
+        logger.info("query_metrics", request_id=request_id, total_ms=m.total_ms, **m.summary())
+
+
+def _run_pipeline_inner(question: str, request_id: str) -> QueryResponse:
     """Answer a natural-language question, routing between two paths.
 
     A qualitative question (risks, strategy, management's discussion) goes to

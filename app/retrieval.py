@@ -45,6 +45,7 @@ import time
 
 import voyageai
 
+from app import metrics
 from app.config import get_settings
 from app.db import get_pool
 from app.logging_config import get_logger
@@ -85,10 +86,16 @@ def embed_query(text: str) -> list[float]:
     settings = get_settings()
     for attempt in range(_EMBED_RATE_LIMIT_RETRIES + 1):
         try:
+            started = time.monotonic()
             result = _get_voyage_client().embed(
                 [text],
                 model=settings.embed_model,
                 input_type="query",
+            )
+            metrics.record_embed(
+                settings.embed_model,
+                getattr(result, "total_tokens", 0) or 0,
+                int((time.monotonic() - started) * 1000),
             )
             return result.embeddings[0]
         except Exception as exc:
