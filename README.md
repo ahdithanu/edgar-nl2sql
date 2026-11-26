@@ -177,24 +177,38 @@ join — is in [ARCHITECTURE.md, Appendix A](ARCHITECTURE.md#appendix-a-a-worked
 
 ## Performance and cost
 
-Measured against the live production deployment, not estimated:
+Measured by [`scripts/bench.py`](scripts/bench.py), which runs the full pipeline
+(retrieval → generate → guard → execute → synthesize, retries included) once per eval
+question against the live services and reports the distribution — not estimated. Latest
+run, n=36 (2026-11-25):
 
 | | |
 |---|---|
-| End-to-end query latency | **4.9–6.4s** (median 5.2s, n=6) |
-| `GET /health` | 0.4s |
-| Tokens per query | ~3,800 in / ~280 out (1 attempt, incl. answer synthesis) |
-| **LLM cost per query** | **~$0.016** typical · ~$0.045 worst case (3 attempts) |
-| Embedding cost per query | ~$0.0000002 (negligible) |
+| End-to-end latency | p50 **4.2s** · p95 **8.4s** · mean 4.4s · max 8.4s |
+| Cost per query | mean **$0.012** (measured tokens × published rates) |
+| Tokens per query | ~4k–7k in / ~60–500 out, across 1–2 Claude calls |
+| Retry rate | **3%** (1/36 needed a 2nd attempt) |
+| Embedding per query | ~10–25 tokens (< $0.00001, negligible) |
 | Fixed monthly | $5 Railway + $10 Supabase Pro |
 
-Most of the latency is the two sequential Claude calls (generate SQL, then synthesize the
-answer); Postgres itself answers in single-digit milliseconds. The retrieval step adds one
-Voyage embedding call, which is fast and effectively free.
+Latency is dominated by the sequential Claude calls (generate SQL, then synthesize the
+answer); Postgres answers in single-digit milliseconds and the Voyage embed is tens of
+tokens. p95 is the worst case: a question that needs a second generation attempt, or a
+narrative answer that synthesizes a longer paragraph.
 
-The 3-attempt cap is what bounds the worst case: without it, a pathological question could
-retry indefinitely and the per-query cost would be unbounded. That is the entire reason
-the number is hardcoded rather than configurable.
+Cost is **measured** token counts (from each provider's `usage`) times published per-token
+rates (Claude Sonnet 5 at $2 / $10 per 1M in/out; Voyage voyage-3.5-lite) — so it's
+"measured tokens × assumed rate", recorded per request as a `query_metrics` log event by
+[`app/metrics.py`](app/metrics.py). The 3-attempt cap bounds the worst case: a hard question
+costs up to ~3× a typical one, which is the entire reason `MAX_ATTEMPTS` is hardcoded rather
+than configurable.
+
+(The run also shows 3/36 returning `success=False` — those are the deliberate
+graceful-refusal eval cases, out-of-window / out-of-schema / nonsense, behaving correctly,
+not errors.)
+
+Reproduce: `python scripts/bench.py` (spends API money; `--out bench.json` writes per-query
+records, `--repeat N` enlarges the sample for a tighter p95).
 
 ## Tests & eval
 
